@@ -1,0 +1,9 @@
+isaac_ros_test:
+  centerpose_decoder_node:
+    ros__parameters:
+      camera_matrix: [616.078125, 0.0, 325.8349304199219, 0.0, 616.1030883789062, 244.4612274169922, 0.0, 0.0, 1.0]
+      original_image_size: [640, 480]
+      output_field_size: [128, 128]
+      height: 0.1
+      frame_id: centerpose
+      marker_color: [1.0, 0.0, 0.0, 1.0]

@@ -1,0 +1,22 @@
+name: "dope_ketchup_pol"
+platform: "onnxruntime_onnx"
+max_batch_size: 0
+input [
+  {
+    name: "input"
+    data_type: TYPE_FP32
+    dims: [ 1, 3, 480, 640 ]
+  }
+]
+output [
+  {
+    name: "output"
+    data_type: TYPE_FP32
+    dims: [ 1, 25, 60, 80 ]
+  }
+]
+version_policy: {
+  specific {
+    versions: [ 1 ]
+  }
+}
