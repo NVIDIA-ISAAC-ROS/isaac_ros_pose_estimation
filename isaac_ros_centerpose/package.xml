@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>isaac_ros_centerpose</name>
+  <version>0.9.1</version>
+  <description>CenterPose: Pose Estimation using Deep Learning</description>
+  <maintainer email="ethany@nvidia.com">Ethan Yu</maintainer>
+  <maintainer email="jeffreys@nvidia.com">Jeff Smith</maintainer>
+  <license>NVIDIA Isaac ROS Software License</license>
+  <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
+
+  <depend>isaac_ros_dnn_encoders</depend>
+  <depend>isaac_ros_nvengine_interfaces</depend>
+  <depend>isaac_ros_tensor_rt</depend>
+  <depend>isaac_ros_triton</depend>
+  <depend>visualization_msgs</depend>
+
+  <exec_depend>rclpy</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
