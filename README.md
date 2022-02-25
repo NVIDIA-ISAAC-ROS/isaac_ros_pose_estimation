@@ -63,9 +63,9 @@ Run the following script in `isaac_ros_common` to build the image and launch the
    sudo apt-get install git-lfs
    
    cd your_ws/src   
-   git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros/isaac_ros_pose_estimation
-   git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros/isaac_ros_dnn_inference
-   git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros/isaac_ros_common
+   git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation
+   git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_dnn_inference
+   git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_common
    ```
 
 3. Start the Docker interactive workspace:
