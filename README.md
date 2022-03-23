@@ -1,4 +1,4 @@
-# Isaac ROS Pose Estimation 
+# Isaac ROS Pose Estimation
 
 <div align="center"><img src="https://github.com/NVlabs/Deep_Object_Pose/raw/master/dope_objects.png" width="300px"/></div>
 
@@ -7,18 +7,20 @@ This repository provides NVIDIA GPU-accelerated packages for 3D object pose esti
 
 Packages in this repository rely on accelerated DNN model inference using [Triton](https://github.com/triton-inference-server/server) or [TensorRT](https://developer.nvidia.com/tensorrt) from [Isaac ROS DNN Inference](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_common/tree/main/isaac_ros_dnn_inference).
 
+For solutions to known issues, please visit the [Troubleshooting](#troubleshooting) section below.
 
 ## System Requirements
 This Isaac ROS package is designed and tested to be compatible with ROS2 Foxy on Jetson hardware, in addition to on x86 systems with an Nvidia GPU. On x86 systems, packages are only supported when run in the provided Isaac ROS Dev Docker container.
 
 ### Jetson
-- AGX Xavier or Xavier NX
-- JetPack 4.6
+- [Jetson AGX Xavier or Xavier NX](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/)
+- [JetPack 4.6.1](https://developer.nvidia.com/embedded/jetpack)
 
 ### x86_64 (in Isaac ROS Dev Docker Container)
-- CUDA 11.1+ supported discrete GPU
-- VPI 1.1.11
 - Ubuntu 20.04+
+- CUDA 11.4+ supported discrete GPU
+- VPI 1.1.11
+
 
 **Note:** For best performance on Jetson, ensure that power settings are configured appropriately ([Power Management for Jetson](https://docs.nvidia.com/jetson/l4t/index.html#page/Tegra%20Linux%20Driver%20Package%20Development%20Guide/power_management_jetson_xavier.html#wwpID0EUHA)).
 
