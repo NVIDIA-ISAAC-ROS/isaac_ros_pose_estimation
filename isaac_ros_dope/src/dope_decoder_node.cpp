@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2021-2022, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -166,7 +166,7 @@ Eigen::Matrix<double, 3, kNumVertexChannel> CuboidVertices(const Eigen::Vector3d
 
 // Converts a vector of Poses to a shared pointer to a message
 std::shared_ptr<geometry_msgs::msg::PoseArray> FormatPoseArray(
-  const isaac_ros_nvengine_interfaces::msg::TensorList::ConstSharedPtr & belief_maps_msg,
+  const isaac_ros_tensor_list_interfaces::msg::TensorList::ConstSharedPtr & belief_maps_msg,
   const std::vector<geometry_msgs::msg::Pose> & poses)
 {
   auto pose_array_msg = std::make_shared<geometry_msgs::msg::PoseArray>();
@@ -178,6 +178,8 @@ std::shared_ptr<geometry_msgs::msg::PoseArray> FormatPoseArray(
 }  // namespace
 
 
+namespace nvidia
+{
 namespace isaac_ros
 {
 namespace dope
@@ -345,7 +347,7 @@ struct DopeDecoderNode::DopeDecoderImpl
   }
 
   std::shared_ptr<geometry_msgs::msg::PoseArray> OnCallback(
-    const isaac_ros_nvengine_interfaces::msg::TensorList::ConstSharedPtr & belief_maps_msg)
+    const isaac_ros_tensor_list_interfaces::msg::TensorList::ConstSharedPtr & belief_maps_msg)
   {
     auto tensors = belief_maps_msg->tensors;
     std::vector<geometry_msgs::msg::Pose> poses;
@@ -353,7 +355,7 @@ struct DopeDecoderNode::DopeDecoderImpl
     if (tensors.size() != kNumTensors) {
       RCLCPP_WARN(
         rclcpp::get_logger(logger_name_),
-        "Error number of tensors: should have 1 tensor but got %d tensors", tensors.size());
+        "Error number of tensors: should have 1 tensor but got %zu tensors", tensors.size());
       return FormatPoseArray(belief_maps_msg, poses);
     }
 
@@ -450,11 +452,10 @@ DopeDecoderNode::DopeDecoderNode(rclcpp::NodeOptions options)
 : Node("dope_decoder_node", options),
   // Parameters
   queue_size_(declare_parameter<int>("queue_size", rmw_qos_profile_default.depth)),
-  header_frame_id_(declare_parameter<std::string>("frame_id", "")),
   config_filename_(declare_parameter<std::string>("configuration_file", "dope_config.yaml")),
   object_name_(declare_parameter<std::string>("object_name", "Ketchup")),
   // Subscribers
-  belief_maps_sub_(create_subscription<isaac_ros_nvengine_interfaces::msg::TensorList>(
+  belief_maps_sub_(create_subscription<isaac_ros_tensor_list_interfaces::msg::TensorList>(
       "belief_map_array", queue_size_,
       std::bind(&DopeDecoderNode::DopeDecoderCallback, this, std::placeholders::_1))),
   // Publishers
@@ -462,10 +463,6 @@ DopeDecoderNode::DopeDecoderNode(rclcpp::NodeOptions options)
   // Impl initialization
   impl_(std::make_unique<struct DopeDecoderImpl>(* this))
 {
-  if (header_frame_id_.empty()) {  // Received empty header frame id
-    RCLCPP_WARN(get_logger(), "Received empty frame id! Header will be published without one.");
-  }
-
   std::array<double, 3> cuboid_dimensions = {0};
   std::array<double, 9> camera_matrix = {0};
 
@@ -519,15 +516,15 @@ DopeDecoderNode::DopeDecoderNode(rclcpp::NodeOptions options)
 DopeDecoderNode::~DopeDecoderNode() = default;
 
 void DopeDecoderNode::DopeDecoderCallback(
-  const isaac_ros_nvengine_interfaces::msg::TensorList::ConstSharedPtr belief_maps_msg)
+  const isaac_ros_tensor_list_interfaces::msg::TensorList::ConstSharedPtr belief_maps_msg)
 {
   std::shared_ptr<geometry_msgs::msg::PoseArray> msg = impl_->OnCallback(belief_maps_msg);
-  msg->header.frame_id = header_frame_id_;
   pub_->publish(*msg);
 }
 
 }  // namespace dope
 }  // namespace isaac_ros
+}  // namespace nvidia
 
 #include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(isaac_ros::dope::DopeDecoderNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(nvidia::isaac_ros::dope::DopeDecoderNode)

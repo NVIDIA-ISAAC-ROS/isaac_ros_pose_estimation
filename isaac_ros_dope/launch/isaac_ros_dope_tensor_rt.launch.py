@@ -1,4 +1,4 @@
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021-2022, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -8,49 +8,125 @@
 
 import os
 
-from launch import LaunchDescription
+import launch
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
 
 def generate_launch_description():
     """Generate launch description for DOPE encoder->TensorRT->DOPE decoder."""
-    MODEL_FILE_NAME = 'dope_ketchup_pol.onnx'
+    DEFAULT_MODEL_FILE_NAME = 'dope_ketchup_pol.onnx'
+    default_model_file_path = os.path.dirname(os.path.abspath(
+        __file__)) + '/../../test/models/' + DEFAULT_MODEL_FILE_NAME
+    launch_args = [
+        DeclareLaunchArgument(
+            'network_image_width',
+            default_value='640',
+            description='The input image width that the network expects'),
+        DeclareLaunchArgument(
+            'network_image_height',
+            default_value='480',
+            description='The input image height that the network expects'),
+        DeclareLaunchArgument(
+            'model_file_path',
+            default_value=f'{default_model_file_path}',
+            description='The absolute file path to the ONNX file'),
+        DeclareLaunchArgument(
+            'engine_file_path',
+            default_value='/tmp/trt_engine.plan',
+            description='The absolute file path to the TensorRT engine file'),
+        DeclareLaunchArgument(
+            'input_tensor_names',
+            default_value='["input_tensor"]',
+            description='A list of tensor names to bound to the specified input binding names'),
+        DeclareLaunchArgument(
+            'input_binding_names',
+            default_value='["input"]',
+            description='A list of input tensor binding names (specified by model)'),
+        DeclareLaunchArgument(
+            'input_tensor_formats',
+            default_value='["nitros_tensor_list_nchw_rgb_f32"]',
+            description='The nitros format of the input tensors'),
+        DeclareLaunchArgument(
+            'output_tensor_names',
+            default_value='["output"]',
+            description='A list of tensor names to bound to the specified output binding names'),
+        DeclareLaunchArgument(
+            'output_binding_names',
+            default_value='["output"]',
+            description='A  list of output tensor binding names (specified by model)'),
+        DeclareLaunchArgument(
+            'output_tensor_formats',
+            default_value='["nitros_tensor_list_nhwc_rgb_f32"]',
+            description='The nitros format of the output tensors'),
+        DeclareLaunchArgument(
+            'tensorrt_verbose',
+            default_value='False',
+            description='Whether TensorRT should verbosely log or not'),
+        DeclareLaunchArgument(
+            'object_name',
+            default_value='Ketchup',
+            description='The object class that the DOPE network is detecting'),
+        DeclareLaunchArgument(
+            'force_engine_update',
+            default_value='False',
+            description='Whether TensorRT should update the TensorRT engine file or not'),
+    ]
+
+    # DNN Image Encoder parameters
+    network_image_width = LaunchConfiguration('network_image_width')
+    network_image_height = LaunchConfiguration('network_image_height')
+
+    # Tensor RT parameters
+    model_file_path = LaunchConfiguration('model_file_path')
+    engine_file_path = LaunchConfiguration('engine_file_path')
+    input_tensor_names = LaunchConfiguration('input_tensor_names')
+    input_binding_names = LaunchConfiguration('input_binding_names')
+    input_tensor_formats = LaunchConfiguration('input_tensor_formats')
+    output_tensor_names = LaunchConfiguration('output_tensor_names')
+    output_binding_names = LaunchConfiguration('output_binding_names')
+    output_tensor_formats = LaunchConfiguration('output_tensor_formats')
+    tensorrt_verbose = LaunchConfiguration('tensorrt_verbose')
+    force_engine_update = LaunchConfiguration('force_engine_update')
+
+    # DOPE Decoder parameters
+    object_name = LaunchConfiguration('object_name')
 
     dope_encoder_node = ComposableNode(
         name='dope_encoder',
         package='isaac_ros_dnn_encoders',
-        plugin='isaac_ros::dnn_inference::DnnImageEncoderNode',
+        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
         parameters=[{
-            'network_image_width': 640,
-            'network_image_height': 480,
-            'network_image_encoding': 'rgb8',
-            'network_normalization_type': 'positive_negative'
+            'network_image_width': network_image_width,
+            'network_image_height': network_image_height,
         }],
         remappings=[('encoded_tensor', 'tensor_pub')])
 
     dope_inference_node = ComposableNode(
         name='dope_inference',
         package='isaac_ros_tensor_rt',
-        plugin='isaac_ros::dnn_inference::TensorRTNode',
+        plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
         parameters=[{
-            'model_file_path': os.path.dirname(os.path.abspath(__file__)) +
-            '/../../test/models/' + MODEL_FILE_NAME,
-            'engine_file_path': '/tmp/trt_engine.plan',
-            'input_tensor_names': ['input'],
-            'input_binding_names': ['input'],
-            'output_tensor_names': ['output'],
-            'output_binding_names': ['output'],
-            'verbose': False
+            'model_file_path': model_file_path,
+            'engine_file_path': engine_file_path,
+            'input_tensor_names': input_tensor_names,
+            'input_binding_names': input_binding_names,
+            'input_tensor_formats': input_tensor_formats,
+            'output_tensor_names': output_tensor_names,
+            'output_binding_names': output_binding_names,
+            'output_tensor_formats': output_tensor_formats,
+            'verbose': tensorrt_verbose,
+            'force_engine_update': force_engine_update
         }])
 
     dope_decoder_node = ComposableNode(
         name='dope_decoder',
         package='isaac_ros_dope',
-        plugin='isaac_ros::dope::DopeDecoderNode',
+        plugin='nvidia::isaac_ros::dope::DopeDecoderNode',
         parameters=[{
-            'object_name': 'Ketchup',
-            'frame_id': 'map'
+            'object_name': object_name,
         }],
         remappings=[('belief_map_array', 'tensor_sub'),
                     ('dope/pose_array', 'poses')])
@@ -59,9 +135,10 @@ def generate_launch_description():
         name='dope_container',
         namespace='',
         package='rclcpp_components',
-        executable='component_container',
+        executable='component_container_mt',
         composable_node_descriptions=[dope_encoder_node, dope_inference_node, dope_decoder_node],
         output='screen',
     )
 
-    return LaunchDescription([container])
+    final_launch_description = launch_args + [container]
+    return launch.LaunchDescription(final_launch_description)

@@ -1,4 +1,4 @@
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021-2022, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -29,7 +29,7 @@ execute_process(COMMAND uname -m COMMAND tr -d '\n'
 )
 message( STATUS "Architecture: ${ARCHITECTURE}" )
 
-set(CUDA_MIN_VERSION "10.2")
+set(CUDA_MIN_VERSION "11.4")
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)

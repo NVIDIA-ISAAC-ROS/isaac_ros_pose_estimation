@@ -1,4 +1,4 @@
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021-2022, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -9,7 +9,7 @@
 from isaac_ros_centerpose.CenterPoseDecoderUtils import Cuboid3d, CuboidPNPSolver, \
     merge_outputs, nms, object_pose_post_process, tensor_to_numpy_array, \
     topk, topk_channel, transpose_and_gather_feat
-from isaac_ros_nvengine_interfaces.msg import TensorList
+from isaac_ros_tensor_list_interfaces.msg import TensorList
 import numpy as np
 import rclpy
 from rclpy.duration import Duration
@@ -220,12 +220,12 @@ class IsaacROSCenterposeDecoderNode(Node):
         self.declare_parameters(
             namespace='',
             parameters=[
-                ('camera_matrix', None),
-                ('original_image_size', None),
-                ('output_field_size', None),
-                ('height', None),
+                ('camera_matrix', rclpy.Parameter.Type.DOUBLE_ARRAY),
+                ('original_image_size', rclpy.Parameter.Type.INTEGER_ARRAY),
+                ('output_field_size', rclpy.Parameter.Type.INTEGER_ARRAY),
+                ('height', rclpy.Parameter.Type.DOUBLE),
                 ('frame_id', 'centerpose'),
-                ('marker_color', None)
+                ('marker_color', rclpy.Parameter.Type.DOUBLE_ARRAY)
             ]
         )
         # Sanity check parameters
@@ -234,8 +234,11 @@ class IsaacROSCenterposeDecoderNode(Node):
                        'output_field_size', 'height', 'marker_color',
                        'frame_id']
         for param_name in param_names:
-            self.params_config[param_name] = self.get_parameter(
-                param_name).value
+            try:
+                self.params_config[param_name] = self.get_parameter(
+                    param_name).value
+            except rclpy.exceptions.ParameterUninitializedException:
+                self.params_config[param_name] = None
 
         if (self.params_config['camera_matrix'] is None) or \
            (len(self.params_config['camera_matrix']) != 9):
