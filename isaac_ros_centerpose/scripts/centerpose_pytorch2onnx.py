@@ -192,7 +192,7 @@ def main(args):
     """Convert pre-trained PyTorch Centerpose model to ONNX for TensorRT to use."""
     model_loading_start_time = time.time()
     print('Loading torch model {}'.format(args.input))
-    # TODO: Turn the below into parameters:
+
     block_class = Bottleneck
     layers = [3, 4, 23, 3]
     heads = {'hm': 1, 'wh': 2, 'hps': 16, 'reg': 2,

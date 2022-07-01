@@ -1,4 +1,4 @@
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021-2022, NVIDIA CORPORATION.  All rights reserved.
 #
 # NVIDIA CORPORATION and its licensors retain all intellectual property
 # and proprietary rights in and to this software, related documentation
@@ -37,37 +37,37 @@ def generate_test_description():
     dope_encoder_node = ComposableNode(
         name='dope_encoder',
         package='isaac_ros_dnn_encoders',
-        plugin='isaac_ros::dnn_inference::DnnImageEncoderNode',
+        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
         namespace=IsaacROSDopePOLTest.generate_namespace(),
         parameters=[{
             'network_image_width': 640,
-            'network_image_height': 480,
-            'network_image_encoding': 'rgb8',
-            'network_normalization_type': 'positive_negative'
+            'network_image_height': 480
         }],
         remappings=[('encoded_tensor', 'tensor_pub')])
 
     dope_inference_node = ComposableNode(
         name='dope_inference',
         package='isaac_ros_tensor_rt',
-        plugin='isaac_ros::dnn_inference::TensorRTNode',
+        plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
         namespace=IsaacROSDopePOLTest.generate_namespace(),
         parameters=[{
             'model_file_path': os.path.dirname(__file__) +
                 '/../../test/models/' + MODEL_FILE_NAME,
             'engine_file_path': '/tmp/trt_engine.plan',
-            'input_tensor_names': ['input'],
+            'input_tensor_names': ['input_tensor'],
             'input_binding_names': ['input'],
+            'input_tensor_formats': ['nitros_tensor_list_nchw_rgb_f32'],
             'output_tensor_names': ['output'],
             'output_binding_names': ['output'],
+            'output_tensor_formats': ['nitros_tensor_list_nhwc_rgb_f32'],
             'verbose': False,
-            'force_engine_update': True
+            'force_engine_update': True,
         }])
 
     dope_decoder_node = ComposableNode(
         name='dope_decoder',
         package='isaac_ros_dope',
-        plugin='isaac_ros::dope::DopeDecoderNode',
+        plugin='nvidia::isaac_ros::dope::DopeDecoderNode',
         namespace=IsaacROSDopePOLTest.generate_namespace(),
         parameters=[{
             'object_name': 'Ketchup',
@@ -80,7 +80,7 @@ def generate_test_description():
         name='dope_container',
         namespace='',
         package='rclcpp_components',
-        executable='component_container',
+        executable='component_container_mt',
         composable_node_descriptions=[dope_encoder_node, dope_inference_node, dope_decoder_node],
         output='screen',
     )
@@ -92,7 +92,12 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
     filepath = pathlib.Path(os.path.dirname(__file__))
 
     def test_pol(self):
-        TIMEOUT = 300
+        TIMEOUT = 150
+
+        self.node._logger.info(
+            f'Waiting {TIMEOUT} seconds for the model to finish setup')
+        time.sleep(TIMEOUT)
+
         received_messages = {}
 
         self.generate_namespace_lookup(['image', 'poses'])
@@ -117,7 +122,8 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
                 if 'poses' in received_messages:
                     done = True
                     break
-            self.assertTrue(done, 'Appropriate output not received')
+            self.assertTrue(done, 'Timeout. Appropriate output not received')
+            self.node._logger.info('A message was successfully received')
 
         finally:
             self.node.destroy_subscription(subs)
