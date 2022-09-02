@@ -5,7 +5,7 @@
 ## Overview
 This repository provides NVIDIA GPU-accelerated packages for 3D object pose estimation. Using a deep learned pose estimation model and a monocular camera, the `isaac_ros_dope` and `isaac_ros_centerpose` package can estimate the 6DOF pose of a target object.
 
-Packages in this repository rely on accelerated DNN model inference using [Triton](https://github.com/triton-inference-server/server) or [TensorRT](https://developer.nvidia.com/tensorrt) from [Isaac ROS DNN Inference](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_common/tree/main/isaac_ros_dnn_inference).
+Packages in this repository rely on accelerated DNN model inference using [Triton](https://github.com/triton-inference-server/server) or [TensorRT](https://developer.nvidia.com/tensorrt) from [Isaac ROS DNN Inference](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_dnn_inference).
 
 
 ## Performance
@@ -49,16 +49,17 @@ The following are the benchmark performance results of the prepared pipelines in
   - [Updates](#updates)
 
 ## Latest Update
-Update 2022-06-30: Refactored README, updated launch file & added `nvidia` namespace, dropped Jetson support for CenterPose
-
+Update 2022-08-31: Update to accelerate DOPE with [NVIDIA Isaac Transport for ROS (NITROS)](https://developer.nvidia.com/blog/improve-perception-performance-for-ros-2-applications-with-nvidia-isaac-transport-for-ros/) and to be compatible with JetPack 5.0.2
 
 ## Supported Platforms
 This package is designed and tested to be compatible with ROS2 Humble running on [Jetson](https://developer.nvidia.com/embedded-computing) or an x86_64 system with an NVIDIA GPU.
 
+> **Note**: Versions of ROS2 earlier than Humble are **not** supported. This package depends on specific ROS2 implementation features that were only introduced beginning with the Humble release.
+
 
 | Platform | Hardware                                                                                                                                                                                                | Software                                                                                                             | Notes                                                                                                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Jetson   | [Jetson Orin](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/)<br/>[Jetson Xavier](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-agx-xavier/) | [JetPack 5.0.1 DP](https://developer.nvidia.com/embedded/jetpack)                                                    | For best performance, ensure that [power settings](https://docs.nvidia.com/jetson/archives/r34.1/DeveloperGuide/text/SD/PlatformPowerAndPerformance.html) are configured appropriately. |
+| Jetson   | [Jetson Orin](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/)<br/>[Jetson Xavier](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-agx-xavier/) | [JetPack 5.0.2](https://developer.nvidia.com/embedded/jetpack)                                                       | For best performance, ensure that [power settings](https://docs.nvidia.com/jetson/archives/r34.1/DeveloperGuide/text/SD/PlatformPowerAndPerformance.html) are configured appropriately. |
 | x86_64   | NVIDIA GPU                                                                                                                                                                                              | [Ubuntu 20.04+](https://releases.ubuntu.com/20.04/) <br> [CUDA 11.6.1+](https://developer.nvidia.com/cuda-downloads) |
 
 
@@ -233,11 +234,10 @@ tensorrt_verbose:=<tensorrt_verbose> object_name:=<object_name>
 
 #### ROS Parameters
 
-| ROS Parameter        | Type     | Default                         | Description                                                                                                                                                                               |
-| -------------------- | -------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queue_size`         | `int`    | `rmw_qos_profile_default.depth` | The length of the subscription queues                                                                                                                                                     |
-| `configuration_file` | `string` | `dope_config.yaml`              | The name of the configuration file to parse. Note: The node will look for that file name under isaac_ros_dope/config                                                                      |
-| `object_name`        | `string` | `Ketchup`                       | The object class the DOPE network is detecting and the DOPE decoder is interpreting. This name should be listed in the configuration file along with its corresponding cuboid dimensions. |
+| ROS Parameter        | Type     | Default            | Description                                                                                                                                                                               |
+| -------------------- | -------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `configuration_file` | `string` | `dope_config.yaml` | The name of the configuration file to parse. Note: The node will look for that file name under isaac_ros_dope/config                                                                      |
+| `object_name`        | `string` | `Ketchup`          | The object class the DOPE network is detecting and the DOPE decoder is interpreting. This name should be listed in the configuration file along with its corresponding cuboid dimensions. |
 
 #### Configuration File
 The DOPE configuration file, which can be found at `isaac_ros_dope/config/dope_config.yaml` may need to modified. Specifically, you will need to specify an object type in the `DopeDecoderNode` that is listed in the `dope_config.yaml` file, so the DOPE decoder node will pick the right parameters to transform the belief maps from the inference node to object poses. The `dope_config.yaml` file uses the camera intrinsics of Realsense by default - if you are using a different camera, you will need to modify the camera_matrix field with the new, scaled `(640x480)` camera intrinsics.
@@ -314,5 +314,6 @@ For solutions to problems with using DNN models, please check [here](https://git
 ## Updates
 | Date       | Changes                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------- |
+| 2022-06-30 | Update to use NITROS for improved performance and to be compatible with JetPack 5.0.2                    |
 | 2022-06-30 | Refactored README, updated launch file & added `nvidia` namespace, dropped Jetson support for CenterPose |
 | 2021-10-20 | Initial update                                                                                           |

@@ -1,0 +1,73 @@
+%YAML 1.2
+# Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+---
+name: dope_decoder
+components:
+- name: tensorlist_in
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 12
+    policy: 0
+- name: posearray_out
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 12
+    policy: 0
+- name: allocator
+  type: nvidia::gxf::UnboundedAllocator
+- name: dope_decoder
+  type: nvidia::isaac_ros::dope::DopeDecoder
+  parameters:
+    tensorlist_receiver: tensorlist_in
+    posearray_transmitter: posearray_out
+    allocator: allocator
+    object_dimensions: []
+    camera_matrix: []
+    object_name: ""
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: tensorlist_in
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: posearray_out
+    min_size: 1
+---
+name: vault
+components:
+- name: signal
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+    policy: 0
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: signal
+    min_size: 1
+- name: vault
+  type: nvidia::gxf::Vault
+  parameters:
+    source: signal
+    max_waiting_count: 1
+    drop_waiting: false
+---
+components:
+- name: edge0
+  type: nvidia::gxf::Connection
+  parameters:
+    source: dope_decoder/posearray_out
+    target: vault/signal
+---
+components:
+- type: nvidia::gxf::GreedyScheduler
+  parameters:
+    clock: clock
+    stop_on_deadlock: false
+- name: clock
+  type: nvidia::gxf::RealtimeClock
