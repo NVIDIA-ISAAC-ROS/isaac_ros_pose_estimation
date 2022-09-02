@@ -13,14 +13,15 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_dope</name>
-  <version>0.10.0</version>
+  <version>0.11.0</version>
   <description>Deep learning based pose estimation</description>
 
-  <maintainer email="hemals@nvidia.com">Hemal Shah</maintainer>
+  <maintainer email="jaiveers@nvidia.com">Jaiveer Singh</maintainer>
   <license>NVIDIA Isaac ROS Software License</license>
   <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
   <author>Ethan Yu</author>
   <author>Jeff Smith</author>
+  <author>Jaiveer Singh</author>
   
   <buildtool_depend>ament_cmake</buildtool_depend>
 
@@ -29,6 +30,8 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
   <depend>cv_bridge</depend>
   <depend>OpenCV</depend>
   <depend>isaac_ros_dnn_encoders</depend>
+  <depend>isaac_ros_nitros</depend>
+  <depend>isaac_ros_nitros_pose_array_type</depend>
   <depend>isaac_ros_tensor_list_interfaces</depend>
   <depend>isaac_ros_tensor_rt</depend>
   <depend>isaac_ros_triton</depend>

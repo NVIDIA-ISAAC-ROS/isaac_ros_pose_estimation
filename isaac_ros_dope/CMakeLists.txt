@@ -29,14 +29,10 @@ execute_process(COMMAND uname -m COMMAND tr -d '\n'
 )
 message( STATUS "Architecture: ${ARCHITECTURE}" )
 
-set(CUDA_MIN_VERSION "11.4")
-
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
-# Eigen
-find_package(Eigen3 REQUIRED)
-
+# Decoder node
 ament_auto_add_library(dope_decoder_node SHARED
   src/dope_decoder_node.cpp)
 target_compile_definitions(dope_decoder_node
@@ -46,16 +42,23 @@ rclcpp_components_register_nodes(dope_decoder_node
   "nvidia::isaac_ros::dope::DopeDecoderNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::dope::DopeDecoderNode;$<TARGET_FILE:dope_decoder_node>\n")
 
+install(DIRECTORY
+  config
+  DESTINATION share/${PROJECT_NAME}
+)
+
 install(TARGETS dope_decoder_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
 
-install(DIRECTORY
-  config
-  DESTINATION share/${PROJECT_NAME}
-)
+# Install extensions directory
+if( ${ARCHITECTURE} STREQUAL "x86_64" )
+  install(DIRECTORY gxf/lib/gxf_x86_64/ DESTINATION share/${PROJECT_NAME}/gxf)
+elseif( ${ARCHITECTURE} STREQUAL "aarch64" )
+  install(DIRECTORY gxf/lib/gxf_jetpack50/ DESTINATION share/${PROJECT_NAME}/gxf)
+endif()
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
