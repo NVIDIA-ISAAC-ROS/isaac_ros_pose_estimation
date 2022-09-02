@@ -109,6 +109,11 @@ def decode_impl(hm, wh, kps, hm_hp, reg, hp_offset, obj_scale, K):
     min_dist = np.expand_dims(min_dist, -1)
     min_ind = np.broadcast_to(np.reshape(min_ind, (num_joints, K, 1, 1)),
                               (batch, num_joints, K, 1, 2))
+    
+    # make hm_kps and min_ind writable
+    hm_kps.setflags(write=1)
+    min_ind.setflags(write=1)
+
     hm_kps = torch.gather(torch.from_numpy(hm_kps), dim=3,
                           index=torch.from_numpy(min_ind)).numpy()
     hm_kps = np.reshape(hm_kps, (batch, num_joints, K, 2))
@@ -319,11 +324,15 @@ class IsaacROSCenterposeDecoderNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = IsaacROSCenterposeDecoderNode('centerpose_decoder_node')
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.init(args=args)
+        node = IsaacROSCenterposeDecoderNode('centerpose_decoder_node')
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

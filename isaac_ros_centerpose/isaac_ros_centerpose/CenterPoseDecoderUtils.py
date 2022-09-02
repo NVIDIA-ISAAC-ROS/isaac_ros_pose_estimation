@@ -55,6 +55,8 @@ def gather_feat(feat, ind, mask=None):
     dim = feat.shape[2]
     ind = np.broadcast_to(np.expand_dims(
         ind, 2), (ind.shape[0], ind.shape[1], dim))
+    # make ind writable
+    ind.setflags(write=1)
     feat = torch.gather(torch.from_numpy(feat), 1,
                         torch.from_numpy(ind)).numpy()
 
