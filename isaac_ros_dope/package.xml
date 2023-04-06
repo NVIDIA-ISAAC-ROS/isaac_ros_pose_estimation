@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_dope</name>
-  <version>0.20.0</version>
+  <version>0.30.0</version>
   <description>Deep learning based pose estimation</description>
 
   <maintainer email="jaiveers@nvidia.com">Jaiveer Singh</maintainer>
@@ -30,25 +30,29 @@
   <author>Ethan Yu</author>
   <author>Jeff Smith</author>
   <author>Jaiveer Singh</author>
-  
+
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <build_depend>eigen</build_depend>
 
   <depend>cv_bridge</depend>
   <depend>OpenCV</depend>
+
   <depend>isaac_ros_dnn_encoders</depend>
   <depend>isaac_ros_nitros</depend>
   <depend>isaac_ros_nitros_pose_array_type</depend>
-  <depend>isaac_ros_tensor_list_interfaces</depend>
   <depend>isaac_ros_nitros_tensor_list_type</depend>
+  <depend>isaac_ros_tensor_list_interfaces</depend>
   <depend>isaac_ros_tensor_rt</depend>
   <depend>isaac_ros_triton</depend>
+
   <depend>message_filters</depend>
   <depend>rclcpp</depend>
   <depend>rcl_yaml_parser</depend>
   <depend>sensor_msgs</depend>
   <depend>tf2_eigen</depend>
+
+  <build_depend>isaac_ros_common</build_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

@@ -4,7 +4,7 @@
 
 ## Overview
 
-This tutorial walks you through a pipeline to estimate the 6DOF pose of a target object using [DOPE](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation) using different backends. It uses input monocular images from a rosbag. The different backends show are:
+This tutorial walks you through a graph to estimate the 6DOF pose of a target object using [DOPE](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation) using different backends. It uses input monocular images from a rosbag. The different backends show are:
 
 1. PyTorch and ONNX
 2. TensorRT Plan files with Triton
@@ -70,8 +70,8 @@ This tutorial walks you through a pipeline to estimate the 6DOF pose of a target
 
     The `<insert-platform>` part should be replaced with `onnxruntime_onnx` for `.onnx` files, `tensorrt_plan` for `.plan` files and `pytorch_libtorch` for `.pt` files.
 
-    > **Note**: The DOPE decoder currently works with the output of a DOPE network that has a fixed input size of 640 x 480, which are the default dimensions set in the script. In order to use input images of other sizes, make sure to crop or resize using ROS2 nodes from [Isaac ROS Image Pipeline](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_image_pipeline) or similar packages.
-
+    > **Note**: The DOPE decoder currently works with the output of a DOPE network that has a fixed input size of 640 x 480, which are the default dimensions set in the script. In order to use input images of other sizes, make sure to crop or resize using ROS 2 nodes from [Isaac ROS Image Pipeline](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_image_pipeline) or similar packages.
+<!-- Split blockquote -->
     > **Note**: The model name must be `model.onnx`.
 
 5. Rebuild and source `isaac_ros_dope`:
@@ -125,4 +125,4 @@ This tutorial walks you through a pipeline to estimate the 6DOF pose of a target
 
     Then click on the `Add` button, select `By topic` and choose `PoseArray` under `/poses`. Finally, change the display to show an axes by updating `Shape` to be `Axes`, as shown in the screenshot at the top of this page. Make sure to update the `Fixed Frame` to `camera`.
 
-    > **Note:** For best results, crop/resize input images to the same dimensions your DNN model is expecting.
+    > **Note**: For best results, crop/resize input images to the same dimensions your DNN model is expecting.

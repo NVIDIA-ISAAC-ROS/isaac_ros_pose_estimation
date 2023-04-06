@@ -4,19 +4,29 @@
 
 ## Overview
 
-This repository provides NVIDIA GPU-accelerated packages for 3D object pose estimation. Using a deep learned pose estimation model and a monocular camera, the `isaac_ros_dope` and `isaac_ros_centerpose` package can estimate the 6DOF pose of a target object.
+Isaac ROS Pose Estimation contains ROS 2 packages to predict the pose of an object. `isaac_ros_dope` provides a pose estimation method using 3D bounding cuboid dimensions of a known object in an input image. `isaac_ros_centerpose` provides a pose estimation method using 3D bounding cuboid dimensions of unknown object instances in a known category of objects from an input image. `isaac_ros_dope` and `isaac_ros_centerpose` use GPU acceleration for DNN inference to estimate the pose of an object. The output prediction can be used by perception functions when fusing with a corresponding depth to provide the 3D pose of an object and distance for navigation or manipulation.
+
+<div align="center"><img src="resources/isaac_ros_pose_estimation_nodegraph.png" width="500px"/></div>
+
+`isaac_ros_dope` is used in a graph of nodes to estimate the pose of a known object with 3D bounding cuboid dimensions. To produce the estimate, a [DOPE](https://github.com/NVlabs/Deep_Object_Pose) (Deep Object Pose Estimation) pre-trained model is required. Input images may need to be cropped and resized to maintain the aspect ratio and match the input resolution of DOPE. After DOPE has produced an estimate, the DNN decoder will use the specified object type to transform using belief maps to output object poses.
+
+NVLabs has provided a DOPE pre-trained model using the [HOPE](https://github.com/swtyree/hope-dataset) dataset. HOPE stands for household objects for pose estimation and is a research-oriented dataset using toy grocery objects and 3D textured meshes of the objects for training on synthetic data. To use DOPE for other objects that are relevant to your application, it needs to be trained with another dataset targeting these objects. For example, DOPE has been trained to detect dollies for use with a mobile robot that navigates under, lifts, and moves that type of dolly.
+
+`isaac_ros_centerpose` has similarities to `isaac_ros_dope` in that both estimate an object pose; however, `isaac_ros_centerpose` provides additional functionality. The [CenterPose](https://github.com/NVlabs/CenterPose) DNN performs object detection on the image, generates 2D keypoints for the object, estimates the 6-DoF pose, and regresses relative 3D bounding cuboid dimensions. This is performed on a known object class without knowing the instance--for example, detecting a chair without having trained on images of all chairs. NVLabs has provided pre-trained models for the CenterPose model; however, as with the DOPE model, it needs to be trained with another dataset targeting objects that are specific to your application.  
+
+Pose estimation is a compute-intensive task and not performed at the frame rate of an input camera. To make efficient use of resources, object pose is estimated for a single frame and used as an input to navigation. Additional object pose estimates are computed to further refine navigation in progress at a lower frequency than the input rate of a typical camera.
 
 Packages in this repository rely on accelerated DNN model inference using [Triton](https://github.com/triton-inference-server/server) or [TensorRT](https://developer.nvidia.com/tensorrt) from [Isaac ROS DNN Inference](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_dnn_inference).
 
 ## Performance
 
-The following are the benchmark performance results of the prepared pipelines in this package, by supported platform:
+The following table summarizes the per-platform performance statistics of sample graphs that use this package, with links included to the full benchmark output. These benchmark configurations are taken from the [Isaac ROS Benchmark](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark#list-of-isaac-ros-benchmarks) collection, based on the [`ros2_benchmark`](https://github.com/NVIDIA-ISAAC-ROS/ros2_benchmark) framework.
 
-| Pipeline     | AGX Orin         | Orin Nano | x86_64 w/ RTX3060  |
-| ------------ | ---------------- | --------- | ------------------ |
-| `DOPE` (VGA) | 40 fps <br> 40ms | N/A       | 84 fps <br> 15.4ms |
+| Sample Graph                                                                                                                                         | Input Size | AGX Orin                                                                                                                                        | Orin NX                                                                                                                                        | Orin Nano 8GB                                                                                                                                        | x86_64 w/ RTX 3060 Ti                                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [DOPE Pose Estimation Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/scripts//isaac_ros_dope_graph.py)             | VGA        | [40.4 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-agx_orin.json)<br>29 ms       | [16.7 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-orin_nx.json)<br>120 ms      | --                                                                                                                                                   | [82.8 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-x86_64_rtx_3060Ti.json)<br>14 ms       |
+| [Centerpose Pose Estimation Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/scripts//isaac_ros_centerpose_graph.py) | VGA        | [50.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-agx_orin.json)<br>38 ms | [20.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-orin_nx.json)<br>67 ms | [15.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-orin_nano_8gb.json)<br>85 ms | [13.5 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-x86_64_rtx_3060Ti.json)<br>42 ms |
 
-These data have been collected per the methodology described [here](https://github.com/NVIDIA-ISAAC-ROS/.github/blob/main/profile/performance-summary.md#methodology).
 
 ## Table of Contents
 
@@ -53,24 +63,24 @@ These data have been collected per the methodology described [here](https://gith
 
 ## Latest Update
 
-Update 2022-10-19: Updated OSS licensing
+Update 2023-04-05: Source available GXF extensions
 
 ## Supported Platforms
 
-This package is designed and tested to be compatible with ROS2 Humble running on [Jetson](https://developer.nvidia.com/embedded-computing) or an x86_64 system with an NVIDIA GPU.
+This package is designed and tested to be compatible with ROS 2 Humble running on [Jetson](https://developer.nvidia.com/embedded-computing) or an x86_64 system with an NVIDIA GPU.
 
-> **Note**: Versions of ROS2 earlier than Humble are **not** supported. This package depends on specific ROS2 implementation features that were only introduced beginning with the Humble release.
+> **Note**: Versions of ROS 2 earlier than Humble are **not** supported. This package depends on specific ROS 2 implementation features that were only introduced beginning with the Humble release.
 
-| Platform | Hardware                                                                                                                                                                                                 | Software                                                                                                             | Notes                                                                                                                                                                                   |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Jetson   | [Jetson Orin](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) <br> [Jetson Xavier](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-agx-xavier/) | [JetPack 5.0.2](https://developer.nvidia.com/embedded/jetpack)                                                       | For best performance, ensure that [power settings](https://docs.nvidia.com/jetson/archives/r34.1/DeveloperGuide/text/SD/PlatformPowerAndPerformance.html) are configured appropriately. |
-| x86_64   | NVIDIA GPU                                                                                                                                                                                               | [Ubuntu 20.04+](https://releases.ubuntu.com/20.04/) <br> [CUDA 11.6.1+](https://developer.nvidia.com/cuda-downloads) |
+| Platform | Hardware                                                                                                                                                                                                 | Software                                                                                                           | Notes                                                                                                                                                                                   |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Jetson   | [Jetson Orin](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) <br> [Jetson Xavier](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-agx-xavier/) | [JetPack 5.1.1](https://developer.nvidia.com/embedded/jetpack)                                                     | For best performance, ensure that [power settings](https://docs.nvidia.com/jetson/archives/r34.1/DeveloperGuide/text/SD/PlatformPowerAndPerformance.html) are configured appropriately. |
+| x86_64   | NVIDIA GPU                                                                                                                                                                                               | [Ubuntu 20.04+](https://releases.ubuntu.com/20.04/) <br> [CUDA 11.8+](https://developer.nvidia.com/cuda-downloads) |
 
 ### Docker
 
 To simplify development, we strongly recommend leveraging the Isaac ROS Dev Docker images by following [these steps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_common/blob/main/docs/dev-env-setup.md). This will streamline your development environment setup with the correct versions of dependencies on both Jetson and x86_64 platforms.
 
-> **Note:** All Isaac ROS Quickstarts, tutorials, and examples have been designed with the Isaac ROS Docker images as a prerequisite.
+> **Note**: All Isaac ROS Quickstarts, tutorials, and examples have been designed with the Isaac ROS Docker images as a prerequisite.
 
 ## Quickstart
 
@@ -97,6 +107,10 @@ To simplify development, we strongly recommend leveraging the Isaac ROS Dev Dock
 
     ```bash
     git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_dnn_inference
+    ```
+
+    ```bash
+    git clone https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_image_pipeline
     ```
 
 3. Pull down a ROS Bag of sample data:
@@ -222,7 +236,7 @@ To simplify development, we strongly recommend leveraging the Isaac ROS Dev Dock
 
     <div align="center"><img src="resources/dope_rviz2.png" width="600px"/></div>
 
-    > **Note:** For best results, crop or resize input images to the same dimensions your DNN model is expecting.
+    > **Note**: For best results, crop or resize input images to the same dimensions your DNN model is expecting.
 
 ## Next Steps
 
@@ -230,8 +244,9 @@ To simplify development, we strongly recommend leveraging the Isaac ROS Dev Dock
 
 To continue your exploration, check out the following suggested examples:
 
-- Using `DOPE` with `Triton` can be found [here](docs/dope-triton.md)
-- Using `Centerpose` with `Triton` can be found [here](docs/centerpose.md)
+- [`DOPE` with `Triton`](docs/dope-triton.md)
+- [`Centerpose` with `Triton`](docs/centerpose.md)
+- [`DOPE` with non-standard input image sizes](docs/dope-custom-size.md)
 
 ### Use Different Models
 
@@ -356,6 +371,7 @@ For solutions to problems with using DNN models, please check [here](https://git
 
 | Date       | Changes                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------- |
+| 2023-04-05 | Source available GXF extensions                                                                          |
 | 2022-06-30 | Update to use NITROS for improved performance and to be compatible with JetPack 5.0.2                    |
 | 2022-06-30 | Refactored README, updated launch file & added `nvidia` namespace, dropped Jetson support for CenterPose |
 | 2021-10-20 | Initial update                                                                                           |
