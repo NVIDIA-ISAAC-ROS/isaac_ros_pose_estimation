@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_centerpose</name>
-  <version>0.20.0</version>
+  <version>0.30.0</version>
   <description>CenterPose: Pose Estimation using Deep Learning</description>
 
   <maintainer email="hemals@nvidia.com">Hemal Shah</maintainer>
@@ -36,6 +36,8 @@
   <depend>isaac_ros_tensor_rt</depend>
   <depend>isaac_ros_triton</depend>
   <depend>visualization_msgs</depend>
+
+  <build_depend>isaac_ros_common</build_depend>
 
   <exec_depend>rclpy</exec_depend>
 

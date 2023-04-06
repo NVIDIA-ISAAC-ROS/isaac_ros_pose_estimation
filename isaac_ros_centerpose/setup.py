@@ -24,7 +24,7 @@ package_name = 'isaac_ros_centerpose'
 
 setup(
     name=package_name,
-    version='0.20.0',
+    version='0.30.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',

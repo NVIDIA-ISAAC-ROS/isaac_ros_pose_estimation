@@ -4,7 +4,7 @@
 
 ## Overview
 
-This tutorial walks you through a pipeline to estimate the 6DOF pose of a target object using [CenterPose](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation) with Triton. It uses input monocular images from a rosbag.
+This tutorial walks you through a graph to estimate the 6DOF pose of a target object using [CenterPose](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation) with Triton. It uses input monocular images from a rosbag.
 > **Warning**: These steps will only work on `x86_64` and **NOT** on `Jetson`.
 
 ## Tutorial Walkthrough
