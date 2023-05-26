@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ constexpr char INPUT_COMPONENT_KEY[] = "dope_decoder/tensorlist_in";
 constexpr char INPUT_DEFAULT_TENSOR_FORMAT[] = "nitros_tensor_list_nchw_rgb_f32";
 constexpr char INPUT_TOPIC_NAME[] = "belief_map_array";
 
-constexpr char OUTPUT_COMPONENT_KEY[] = "vault/vault";
+constexpr char OUTPUT_COMPONENT_KEY[] = "sink/sink";
 constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT[] = "nitros_pose_array";
 constexpr char OUTPUT_TOPIC_NAME[] = "dope/pose_array";
 
