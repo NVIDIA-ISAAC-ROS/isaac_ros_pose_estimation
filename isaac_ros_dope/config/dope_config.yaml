@@ -60,5 +60,10 @@ dope:
       "PeasAndCarrots" : [ 5.8512001037597656, 7.0636000633239746, 6.5918002128601074 ]
     }
 
-    # 9 element camera matrix (assuming 640x480 image)
-    camera_matrix: [463.51, 0.0, 321.652, 0.0, 616.44, 232.260, 0.0, 0.0, 1.0]
+    # 9 element camera matrix (using default from Ketchup demo)
+    # Taken from: https://github.com/andrewyguo/dope_training/blob/master/inference/config/camera_info.yaml
+    camera_matrix: [
+      364.16501736,   0.0,          121.36296296,
+      0.0,            364.16501736, 121.36296296,
+      0.0,            0.0,          1.0
+    ]
