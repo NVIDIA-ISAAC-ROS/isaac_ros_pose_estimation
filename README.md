@@ -246,6 +246,7 @@ To continue your exploration, check out the following suggested examples:
 - [`DOPE` with `Triton`](docs/dope-triton.md)
 - [`Centerpose` with `Triton`](docs/centerpose.md)
 - [`DOPE` with non-standard input image sizes](docs/dope-custom-size.md)
+- [Train your own `DOPE` model](docs/dope-custom-model.md)
 
 ### Use Different Models
 
