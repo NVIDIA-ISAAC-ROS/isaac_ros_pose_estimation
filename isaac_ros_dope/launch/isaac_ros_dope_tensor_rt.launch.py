@@ -39,6 +39,14 @@ def generate_launch_description():
             default_value='480',
             description='The input image height that the network expects'),
         DeclareLaunchArgument(
+            'encoder_image_mean',
+            default_value='[0.5, 0.5, 0.5]',
+            description='The mean for image normalization'),
+        DeclareLaunchArgument(
+            'encoder_image_stddev',
+            default_value='[0.5, 0.5, 0.5]',
+            description='The standard deviation for image normalization'),
+        DeclareLaunchArgument(
             'model_file_path',
             default_value=f'{default_model_file_path}',
             description='The absolute file path to the ONNX file'),
@@ -87,6 +95,8 @@ def generate_launch_description():
     # DNN Image Encoder parameters
     network_image_width = LaunchConfiguration('network_image_width')
     network_image_height = LaunchConfiguration('network_image_height')
+    encoder_image_mean = LaunchConfiguration('encoder_image_mean')
+    encoder_image_stddev = LaunchConfiguration('encoder_image_stddev')
 
     # Tensor RT parameters
     model_file_path = LaunchConfiguration('model_file_path')
@@ -110,6 +120,8 @@ def generate_launch_description():
         parameters=[{
             'network_image_width': network_image_width,
             'network_image_height': network_image_height,
+            'image_mean': encoder_image_mean,
+            'image_stddev': encoder_image_stddev,
         }],
         remappings=[('encoded_tensor', 'tensor_pub')])
 

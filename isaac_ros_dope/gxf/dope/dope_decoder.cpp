@@ -182,24 +182,24 @@ FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
     for (size_t pp = 0; pp < peaks.size(); ++pp) {
       const auto peak = peaks[pp];
 
-      // Compute the weighted average for localizing the peak, using a 5x5
+      // Compute the weighted average for localizing the peak, using an 11x11
       // window
       Vector2f peak_sum(0, 0);
       float weight_sum = 0.0f;
-      for (int ii = -2; ii <= 2; ++ii) {
-        for (int jj = -2; jj <= 2; ++jj) {
-          const int row = peak[0] + ii;
-          const int col = peak[1] + jj;
+      const int WINDOW_SIZE = 11;
+      for (int ii = -(WINDOW_SIZE - 1) / 2; ii <= (WINDOW_SIZE - 1) / 2; ++ii) {
+        for (int jj = -(WINDOW_SIZE - 1) / 2; jj <= (WINDOW_SIZE - 1) / 2; ++jj) {
+          const int col = peak[0] + ii;
+          const int row = peak[1] + jj;
 
-          if (col < 0 || col >= image.size[1] || row < 0 ||
-              row >= image.size[0]) {
+          if (col < 0 || col >= image.cols || row < 0 || row >= image.rows) {
             continue;
           }
 
           const float weight = image.at<float>(row, col);
           weight_sum += weight;
-          peak_sum[0] += row * weight;
-          peak_sum[1] += col * weight;
+          peak_sum[0] += col * weight;
+          peak_sum[1] += row * weight;
         }
       }
 
@@ -322,7 +322,7 @@ ExtractPose(const DopeObjectKeypoints &object,
   cv::Mat cv_keypoints_2d;
   cv::eigen2cv(object.second, cv_keypoints_2d);
   if (!cv::solvePnP(cv_keypoints_3d.t(), cv_keypoints_2d.t(), camera_matrix,
-                    dist_coeffs, rvec, tvec)) {
+                    dist_coeffs, rvec, tvec, false, cv::SOLVEPNP_EPNP)) {
     GXF_LOG_ERROR("cv::solvePnP failed");
     return nvidia::gxf::Unexpected{GXF_FAILURE};
   }
