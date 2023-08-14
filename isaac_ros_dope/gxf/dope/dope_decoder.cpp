@@ -465,6 +465,13 @@ gxf_result_t DopeDecoder::tick() noexcept {
   }
   auto posearray_message = maybe_posearray_message.value();
 
+  auto maybe_added_timestamp = AddInputTimestampToOutput(
+    posearray_message, maybe_beliefmaps_message.value());
+  if (!maybe_added_timestamp) {
+    GXF_LOG_ERROR("Failed to add timestamp");
+    return gxf::ToResultCode(maybe_added_timestamp);
+  }
+
   // Copy tensor data over to a more portable form
   std::array<cv::Mat, kInputMapsChannels> maps;
   const int input_map_row{belief_maps->shape().dimension(2)};
@@ -536,13 +543,7 @@ gxf_result_t DopeDecoder::tick() noexcept {
       return GXF_FAILURE;
     }
   }
-
-  auto maybe_added_timestamp = AddInputTimestampToOutput(
-      posearray_message, maybe_beliefmaps_message.value());
-  if (!maybe_added_timestamp) {
-    return gxf::ToResultCode(maybe_added_timestamp);
-  }
-
+  
   return gxf::ToResultCode(
       posearray_transmitter_->publish(std::move(posearray_message)));
 }
