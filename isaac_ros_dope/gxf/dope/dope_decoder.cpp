@@ -414,7 +414,7 @@ gxf_result_t DopeDecoder::start() noexcept {
   // Extract 3D coordinates of bounding cuboid + centroid from object dimensions
   auto dims = object_dimensions_param_.get();
   if (dims.size() != 3) {
-    GXF_LOG_ERROR("Expected object dimensions vector to be length 3 but got %u",
+    GXF_LOG_ERROR("Expected object dimensions vector to be length 3 but got %lu",
                   dims.size());
     return GXF_FAILURE;
   }
@@ -422,7 +422,7 @@ gxf_result_t DopeDecoder::start() noexcept {
 
   // Load camera matrix into cv::Mat
   if (camera_matrix_param_.get().size() != 9) {
-    GXF_LOG_ERROR("Expected camera matrix vector to be length 9 but got %u",
+    GXF_LOG_ERROR("Expected camera matrix vector to be length 9 but got %lu",
                   camera_matrix_param_.get().size());
     return GXF_FAILURE;
   }
@@ -543,7 +543,7 @@ gxf_result_t DopeDecoder::tick() noexcept {
       return GXF_FAILURE;
     }
   }
-  
+
   return gxf::ToResultCode(
       posearray_transmitter_->publish(std::move(posearray_message)));
 }

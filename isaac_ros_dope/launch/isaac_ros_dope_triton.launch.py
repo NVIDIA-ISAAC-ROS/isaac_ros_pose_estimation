@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,6 +25,14 @@ from launch_ros.descriptions import ComposableNode
 def generate_launch_description():
     """Generate launch description for DOPE encoder->Triton->DOPE decoder."""
     launch_args = [
+        DeclareLaunchArgument(
+            'input_image_width',
+            default_value='640',
+            description='The input image width'),
+        DeclareLaunchArgument(
+            'input_image_height',
+            default_value='480',
+            description='The input image height'),
         DeclareLaunchArgument(
             'network_image_width',
             default_value='640',
@@ -103,17 +111,32 @@ def generate_launch_description():
     # DOPE Decoder parameters
     object_name = LaunchConfiguration('object_name')
 
+    image_resize_node = ComposableNode(
+        package='isaac_ros_image_proc',
+        plugin='nvidia::isaac_ros::image_proc::ResizeNode',
+        name='image_resize',
+        parameters=[{
+                'output_width': network_image_width,
+                'output_height': network_image_width
+        }],
+    )
+
     dope_encoder_node = ComposableNode(
         name='dope_encoder',
-        package='isaac_ros_dnn_encoders',
+        package='isaac_ros_dnn_image_encoder',
         plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
         parameters=[{
+            'input_image_width': network_image_width,
+            'input_image_height': network_image_height,
             'network_image_width': network_image_width,
             'network_image_height': network_image_height,
             'image_mean': encoder_image_mean,
             'image_stddev': encoder_image_stddev,
         }],
-        remappings=[('encoded_tensor', 'tensor_pub')])
+        remappings=[
+            ('image', 'resize/image'),
+            ('encoded_tensor', 'tensor_pub')
+        ])
 
     dope_inference_node = ComposableNode(
         name='dope_inference',
@@ -146,7 +169,9 @@ def generate_launch_description():
         namespace='',
         package='rclcpp_components',
         executable='component_container_mt',
-        composable_node_descriptions=[dope_encoder_node, dope_inference_node, dope_decoder_node],
+        composable_node_descriptions=[
+            image_resize_node, dope_encoder_node, dope_inference_node, dope_decoder_node
+        ],
         output='screen',
     )
 

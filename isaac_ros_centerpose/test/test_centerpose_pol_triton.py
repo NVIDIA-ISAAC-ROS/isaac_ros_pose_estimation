@@ -21,9 +21,9 @@ Basic Proof-Of-Life test for the Isaac ROS CenterPose Node.
 This test checks that an image can be encoder into a tensor, run through
 Triton using a CenterPose model, and the inference decoded into a series of poses.
 """
-import errno
 import os
 import pathlib
+import subprocess
 import time
 
 from isaac_ros_test import IsaacROSBaseTest, JSONConversion
@@ -38,20 +38,38 @@ from vision_msgs.msg import Detection3DArray
 
 MODEL_GENERATION_TIMEOUT_SEC = 300
 INIT_WAIT_SEC = 10
-MODEL_PATH = '/tmp/centerpose_trt_engine.plan'
+LAUNCH_DIR_PATH = os.path.dirname(os.path.realpath(__file__))
+MODEL_DIR_PATH = LAUNCH_DIR_PATH + '/models'
+MODEL_NAME = 'centerpose_shoe'
+MODEL_VERSION = 1
+ONNX_FILE_PATH = f'{MODEL_DIR_PATH}/{MODEL_NAME}.onnx'
+MODEL_PATH = f'{MODEL_DIR_PATH}/{MODEL_NAME}/{MODEL_VERSION}/model.plan'
 
 
 @pytest.mark.rostest
 def generate_test_description():
-    try:
-        os.remove(MODEL_PATH)
-    except OSError as e:
-        if e.errno != errno.ENOENT:
-            print(f'File exists but error deleting {MODEL_PATH}')
+    # Generate engine file using trt exec
+    print('Generating engine file using trtexec...')
+    trt_exec_args = [
+        f'--onnx={ONNX_FILE_PATH}',
+        f'--saveEngine={MODEL_PATH}',
+    ]
+    trt_exec_executable = '/usr/src/tensorrt/bin/trtexec'
 
-    launch_dir_path = pathlib.Path(os.path.dirname(os.path.realpath(__file__)))
-    model_dir_path = launch_dir_path / 'models'
-    model_file_name = 'centerpose_shoe.onnx'
+    print('Running command:\n' +
+          ' '.join([trt_exec_executable] + trt_exec_args))
+    result = subprocess.run(
+            [trt_exec_executable] + trt_exec_args,
+            env=os.environ,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+    )
+
+    if result.returncode != 0:
+        raise Exception(
+            f'Failed to convert with status: {result.returncode}.\n'
+            f'stderr:\n' + result.stderr.decode('utf-8')
+        )
 
     centerpose_encoder_node = ComposableNode(
         name='centerpose_encoder',
@@ -70,12 +88,12 @@ def generate_test_description():
 
     centerpose_inference_node = ComposableNode(
         name='centerpose_inference',
-        package='isaac_ros_tensor_rt',
-        plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
+        package='isaac_ros_triton',
+        plugin='nvidia::isaac_ros::dnn_inference::TritonNode',
         namespace=IsaacROSCenterPosePOLTest.generate_namespace(),
         parameters=[{
-            'model_file_path': str(model_dir_path / model_file_name),
-            'engine_file_path': MODEL_PATH,
+            'model_name': f'{MODEL_NAME}',
+            'model_repository_paths': [MODEL_DIR_PATH],
             'input_tensor_names': ['input_tensor'],
             'input_binding_names': ['input'],
             'input_tensor_formats': ['nitros_tensor_list_nchw_rgb_f32'],
@@ -86,8 +104,7 @@ def generate_test_description():
                                      'obj_scale', 'kps_displacement_mean',
                                      'kps_heatmap_mean'],
             'output_tensor_formats': ['nitros_tensor_list_nhwc_rgb_f32'],
-            'verbose': False,
-            'force_engine_update': False
+            'log_level': 0
         }],
     )
 

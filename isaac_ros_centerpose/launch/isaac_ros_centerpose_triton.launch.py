@@ -15,9 +15,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import os
-
-import launch
+from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
@@ -25,43 +23,60 @@ from launch_ros.descriptions import ComposableNode
 
 
 def generate_launch_description():
-    """Generate launch description for DOPE encoder->TensorRT->DOPE decoder."""
-    DEFAULT_MODEL_FILE_NAME = 'dope_ketchup_pol.onnx'
-    default_model_file_path = os.path.dirname(os.path.abspath(
-        __file__)) + '/../../test/models/' + DEFAULT_MODEL_FILE_NAME
+    """Generate launch description for Centerpose."""
+    tensor_names = [
+        'bboxes',
+        'scores',
+        'kps',
+        'clses',
+        'obj_scale',
+        'kps_displacement_mean',
+        'kps_heatmap_mean',
+    ]
+    tensor_names_str = '['
+    for tensor_name in tensor_names:
+        tensor_names_str += f'"{tensor_name}"'
+        if tensor_name != tensor_names[-1]:
+            tensor_names_str += ','
+    tensor_names_str += ']'
+
     launch_args = [
         DeclareLaunchArgument(
             'input_image_width',
-            default_value='640',
+            default_value='600',
             description='The input image width'),
         DeclareLaunchArgument(
             'input_image_height',
-            default_value='480',
+            default_value='800',
             description='The input image height'),
         DeclareLaunchArgument(
             'network_image_width',
-            default_value='640',
+            default_value='512',
             description='The input image width that the network expects'),
         DeclareLaunchArgument(
             'network_image_height',
-            default_value='480',
+            default_value='512',
             description='The input image height that the network expects'),
         DeclareLaunchArgument(
             'encoder_image_mean',
-            default_value='[0.5, 0.5, 0.5]',
+            default_value='[0.408, 0.447, 0.47]',
             description='The mean for image normalization'),
         DeclareLaunchArgument(
             'encoder_image_stddev',
-            default_value='[0.5, 0.5, 0.5]',
+            default_value='[0.289, 0.274, 0.278]',
             description='The standard deviation for image normalization'),
         DeclareLaunchArgument(
-            'model_file_path',
-            default_value=f'{default_model_file_path}',
-            description='The absolute file path to the ONNX file'),
+            'model_name',
+            default_value='',
+            description='The name of the model'),
         DeclareLaunchArgument(
-            'engine_file_path',
-            default_value='/tmp/trt_engine.plan',
-            description='The absolute file path to the TensorRT engine file'),
+            'model_repository_paths',
+            default_value='',
+            description='The absolute path to the repository of models'),
+        DeclareLaunchArgument(
+            'max_batch_size',
+            default_value='0',
+            description='The maximum allowed batch size of the model'),
         DeclareLaunchArgument(
             'input_tensor_names',
             default_value='["input_tensor"]',
@@ -76,116 +91,136 @@ def generate_launch_description():
             description='The nitros format of the input tensors'),
         DeclareLaunchArgument(
             'output_tensor_names',
-            default_value='["output"]',
+            default_value=tensor_names_str,
             description='A list of tensor names to bound to the specified output binding names'),
         DeclareLaunchArgument(
             'output_binding_names',
-            default_value='["output"]',
-            description='A  list of output tensor binding names (specified by model)'),
+            default_value=tensor_names_str,
+            description='A list of output tensor binding names (specified by model)'),
         DeclareLaunchArgument(
             'output_tensor_formats',
             default_value='["nitros_tensor_list_nhwc_rgb_f32"]',
             description='The nitros format of the output tensors'),
         DeclareLaunchArgument(
-            'tensorrt_verbose',
-            default_value='False',
-            description='Whether TensorRT should verbosely log or not'),
+            'output_field_size',
+            default_value='[128, 128]',
+            description='Represents the size of the 2D keypoint decoding from the network output'),
+        DeclareLaunchArgument(
+            'cuboid_scaling_factor',
+            default_value='1.0',
+            description='Scales the cuboid used for calculating the size of the objects detected'),
+        DeclareLaunchArgument(
+            'score_threshold',
+            default_value='0.3',
+            description='The threshold for scores values to discard.'),
         DeclareLaunchArgument(
             'object_name',
-            default_value='Ketchup',
-            description='The object class that the DOPE network is detecting'),
+            default_value='shoe',
+            description='The name of the category instance that is being detected',
+        ),
         DeclareLaunchArgument(
-            'force_engine_update',
-            default_value='False',
-            description='Whether TensorRT should update the TensorRT engine file or not'),
+            'show_axes',
+            default_value='True',
+            description='Whether to show axes or not for visualization',
+        ),
+        DeclareLaunchArgument(
+            'bounding_box_color',
+            default_value='0x000000ff',
+            description='The color of the bounding box for visualization',
+        ),
     ]
 
     # DNN Image Encoder parameters
+    input_image_width = LaunchConfiguration('input_image_width')
+    input_image_height = LaunchConfiguration('input_image_height')
     network_image_width = LaunchConfiguration('network_image_width')
     network_image_height = LaunchConfiguration('network_image_height')
     encoder_image_mean = LaunchConfiguration('encoder_image_mean')
     encoder_image_stddev = LaunchConfiguration('encoder_image_stddev')
 
     # Tensor RT parameters
-    model_file_path = LaunchConfiguration('model_file_path')
-    engine_file_path = LaunchConfiguration('engine_file_path')
+    model_name = LaunchConfiguration('model_name')
+    model_repository_paths = LaunchConfiguration('model_repository_paths')
+    max_batch_size = LaunchConfiguration('max_batch_size')
     input_tensor_names = LaunchConfiguration('input_tensor_names')
     input_binding_names = LaunchConfiguration('input_binding_names')
     input_tensor_formats = LaunchConfiguration('input_tensor_formats')
     output_tensor_names = LaunchConfiguration('output_tensor_names')
     output_binding_names = LaunchConfiguration('output_binding_names')
     output_tensor_formats = LaunchConfiguration('output_tensor_formats')
-    tensorrt_verbose = LaunchConfiguration('tensorrt_verbose')
-    force_engine_update = LaunchConfiguration('force_engine_update')
 
-    # DOPE Decoder parameters
+    # Centerpose Decoder parameters
+    output_field_size = LaunchConfiguration('output_field_size')
+    cuboid_scaling_factor = LaunchConfiguration('cuboid_scaling_factor')
+    score_threshold = LaunchConfiguration('score_threshold')
     object_name = LaunchConfiguration('object_name')
 
-    image_resize_node = ComposableNode(
-        package='isaac_ros_image_proc',
-        plugin='nvidia::isaac_ros::image_proc::ResizeNode',
-        name='image_resize',
-        parameters=[{
-                'output_width': network_image_width,
-                'output_height': network_image_width
-        }],
-    )
+    # Centerpose visualization parameters
+    show_axes = LaunchConfiguration('show_axes')
+    bounding_box_color = LaunchConfiguration('bounding_box_color')
 
-    dope_encoder_node = ComposableNode(
-        name='dope_encoder',
+    centerpose_encoder_node = ComposableNode(
+        name='centerpose_encoder',
         package='isaac_ros_dnn_image_encoder',
         plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
         parameters=[{
-            'input_image_width': network_image_width,
-            'input_image_height': network_image_height,
+            'input_image_width': input_image_width,
+            'input_image_height': input_image_height,
             'network_image_width': network_image_width,
             'network_image_height': network_image_height,
             'image_mean': encoder_image_mean,
             'image_stddev': encoder_image_stddev,
         }],
-        remappings=[
-            ('image', 'resize/image'),
-            ('encoded_tensor', 'tensor_pub')
-        ])
+        remappings=[('encoded_tensor', 'tensor_pub')])
 
-    dope_inference_node = ComposableNode(
-        name='dope_inference',
-        package='isaac_ros_tensor_rt',
-        plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
+    centerpose_inference_node = ComposableNode(
+        name='centerpose_inference',
+        package='isaac_ros_triton',
+        plugin='nvidia::isaac_ros::dnn_inference::TritonNode',
         parameters=[{
-            'model_file_path': model_file_path,
-            'engine_file_path': engine_file_path,
+            'model_name': model_name,
+            'model_repository_paths': model_repository_paths,
+            'max_batch_size': max_batch_size,
             'input_tensor_names': input_tensor_names,
             'input_binding_names': input_binding_names,
             'input_tensor_formats': input_tensor_formats,
             'output_tensor_names': output_tensor_names,
             'output_binding_names': output_binding_names,
             'output_tensor_formats': output_tensor_formats,
-            'verbose': tensorrt_verbose,
-            'force_engine_update': force_engine_update
         }])
 
-    dope_decoder_node = ComposableNode(
-        name='dope_decoder',
-        package='isaac_ros_dope',
-        plugin='nvidia::isaac_ros::dope::DopeDecoderNode',
+    centerpose_decoder_node = ComposableNode(
+        name='centerpose_decoder_node',
+        package='isaac_ros_centerpose',
+        plugin='nvidia::isaac_ros::centerpose::CenterPoseDecoderNode',
         parameters=[{
+            'output_field_size': output_field_size,
+            'cuboid_scaling_factor': cuboid_scaling_factor,
+            'score_threshold': score_threshold,
             'object_name': object_name,
-        }],
-        remappings=[('belief_map_array', 'tensor_sub'),
-                    ('dope/pose_array', 'poses')])
+        }]
+    )
 
-    container = ComposableNodeContainer(
-        name='dope_container',
+    centerpose_visualizer_node = ComposableNode(
+        name='centerpose_visualizer_node',
+        package='isaac_ros_centerpose',
+        plugin='nvidia::isaac_ros::centerpose::CenterPoseVisualizerNode',
+        parameters=[{
+            'show_axes': show_axes,
+            'bounding_box_color': bounding_box_color,
+        }]
+    )
+
+    rclcpp_container = ComposableNodeContainer(
+        name='centerpose_container',
         namespace='',
         package='rclcpp_components',
         executable='component_container_mt',
         composable_node_descriptions=[
-            image_resize_node, dope_encoder_node, dope_inference_node, dope_decoder_node
-        ],
+            centerpose_encoder_node, centerpose_inference_node,
+            centerpose_decoder_node, centerpose_visualizer_node],
         output='screen',
-        arguments=['--ros-args', '--log-level', 'info']
     )
 
-    final_launch_description = launch_args + [container]
-    return launch.LaunchDescription(final_launch_description)
+    final_launch_container = launch_args + [rclcpp_container]
+    return LaunchDescription(final_launch_container)
