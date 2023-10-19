@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,8 +38,6 @@ from sensor_msgs.msg import Image
 
 MODEL_FILE_NAME = 'dope_ketchup_pol.onnx'
 
-_TEST_CASE_NAMESPACE = 'dope_node_test'
-
 MODEL_GENERATION_TIMEOUT_SEC = 300
 INIT_WAIT_SEC = 10
 MODEL_PATH = '/tmp/dope_trt_engine.plan'
@@ -49,12 +47,14 @@ MODEL_PATH = '/tmp/dope_trt_engine.plan'
 def generate_test_description():
     dope_encoder_node = ComposableNode(
         name='dope_encoder',
-        package='isaac_ros_dnn_encoders',
+        package='isaac_ros_dnn_image_encoder',
         plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
         namespace=IsaacROSDopePOLTest.generate_namespace(),
         parameters=[{
             'network_image_width': 640,
-            'network_image_height': 480
+            'network_image_height': 480,
+            'input_image_width': 852,
+            'input_image_height': 480
         }],
         remappings=[('encoded_tensor', 'tensor_pub')])
 
@@ -138,6 +138,7 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
         try:
             json_file = self.filepath / 'test_cases/pose_estimation_0/image.json'
             image = JSONConversion.load_image_from_json(json_file)
+            image.header.stamp = self.node.get_clock().now().to_msg()
 
             TIMEOUT = 60
             end_time = time.time() + TIMEOUT

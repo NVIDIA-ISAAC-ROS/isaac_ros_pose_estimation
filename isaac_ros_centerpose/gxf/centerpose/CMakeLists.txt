@@ -15,34 +15,54 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-project(gxf_dope LANGUAGES C CXX)
+project(gxf_centerpose LANGUAGES C CXX)
 
 # Dependencies
 find_package(CUDAToolkit REQUIRED)
-find_package (Eigen3 3.3 REQUIRED NO_MODULE)
+find_package (Eigen3 3.3 REQUIRED)
 find_package(GXF ${ISAAC_ROS_GXF_VERSION} MODULE REQUIRED
     COMPONENTS
     cuda
     multimedia
     std
+    isaac_messages
 )
 find_package(OpenCV REQUIRED)
 find_package(yaml-cpp)
+find_package(isaac_ros_nitros_detection3_d_array_type REQUIRED)
 
-# DOPE extension
-add_library(gxf_dope SHARED
-    dope_decoder.cpp
-    dope_decoder.hpp
-    dope_ext.cpp
+# Centerpose extension
+add_library(gxf_centerpose SHARED
+    components/centerpose_postprocessor.cpp
+    components/centerpose_postprocessor.hpp
+    components/cuboid3d.hpp
+    components/cuboid3d.cpp
+    components/cuboid_pnp_solver.cpp
+    components/cuboid_pnp_solver.hpp 
+    components/centerpose_detection.hpp
+    components/centerpose_detection_to_isaac.hpp
+    components/centerpose_detection_to_isaac.cpp
+    components/soft_nms_nvidia.cpp
+    components/soft_nms_nvidia.hpp
+    components/centerpose_visualizer.cpp
+    components/centerpose_visualizer.hpp
+    components/video_buffer_utils.hpp
+    centerpose_ext.cpp
 )
-target_include_directories(gxf_dope PUBLIC ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(gxf_dope
+target_include_directories(gxf_centerpose
+  PUBLIC
+    ${OpenCV_INCLUDE_DIRS}
+    ${isaac_ros_nitros_detection3_d_array_type_INCLUDE_DIRS}
+)
+target_link_libraries(gxf_centerpose
   PUBLIC
     CUDA::cudart
     Eigen3::Eigen
     GXF::cuda
+    GXF::isaac_messages
     GXF::multimedia
     GXF::std
     ${OpenCV_LIBS}
     yaml-cpp
+    ${isaac_ros_nitros_detection3_d_array_type_LIBRARIES}
 )

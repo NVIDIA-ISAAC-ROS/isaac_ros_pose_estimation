@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_dope</name>
-  <version>0.31.0</version>
+  <version>2.0.0</version>
   <description>Deep learning based pose estimation</description>
 
   <maintainer email="jaiveers@nvidia.com">Jaiveer Singh</maintainer>
@@ -38,7 +38,7 @@
   <depend>cv_bridge</depend>
   <depend>OpenCV</depend>
 
-  <depend>isaac_ros_dnn_encoders</depend>
+  <depend>isaac_ros_dnn_image_encoder</depend>
   <depend>isaac_ros_nitros</depend>
   <depend>isaac_ros_nitros_pose_array_type</depend>
   <depend>isaac_ros_nitros_tensor_list_type</depend>
@@ -53,6 +53,7 @@
   <depend>tf2_eigen</depend>
 
   <build_depend>isaac_ros_common</build_depend>
+  <build_depend>isaac_ros_gxf</build_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

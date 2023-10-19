@@ -1,0 +1,127 @@
+%YAML 1.2
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+---
+name: centerpose_decoder
+components:
+- name: input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 12
+    policy: 0
+- name: camera_model_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 12
+    policy: 0
+- name: output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 12
+    policy: 0
+- name: allocator
+  type: nvidia::gxf::UnboundedAllocator
+- name: centerpose_decoder
+  type: nvidia::isaac::centerpose::CenterPosePostProcessor
+  parameters:
+    input: input
+    camera_model_input: camera_model_input
+    output: output
+    allocator: allocator
+    output_field_size: []
+    cuboid_scaling_factor: 0.0
+    score_threshold: 1.0
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: input
+    min_size: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: camera_model_input
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: output
+    min_size: 1
+---
+name: centerpose_decoder_to_isaac
+components:
+- name: input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 12
+    policy: 0
+- name: output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 12
+    policy: 0
+- name: centerpose_decoder_to_isaac
+  type: nvidia::isaac::centerpose::CenterPoseDetectionToIsaac
+  parameters:
+    input: input
+    output: output
+    object_name: ""
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: input
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: output
+    min_size: 1
+---
+name: sink
+components:
+- name: signal
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 2
+    policy: 0
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: signal
+    min_size: 1
+- name: sink
+  type: nvidia::isaac_ros::MessageRelay
+  parameters:
+    source: signal
+---
+components:
+- name: edge0
+  type: nvidia::gxf::Connection
+  parameters:
+    source: centerpose_decoder/output
+    target: centerpose_decoder_to_isaac/input
+- name: edge1
+  type: nvidia::gxf::Connection
+  parameters:
+    source: centerpose_decoder_to_isaac/output
+    target: sink/signal
+---
+components:
+- name: clock
+  type: nvidia::gxf::RealtimeClock
+- type: nvidia::gxf::MultiThreadScheduler
+  parameters:
+    clock: clock
+    stop_on_deadlock: false
+    check_recession_period_ms: 1
+    worker_thread_number: 2
+- type: nvidia::gxf::JobStatistics
+  parameters:
+    clock: clock
