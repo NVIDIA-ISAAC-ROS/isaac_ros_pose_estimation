@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,10 @@ import pathlib
 import subprocess
 import time
 
+from ament_index_python.packages import get_package_share_directory
 from isaac_ros_test import IsaacROSBaseTest, JSONConversion
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
@@ -71,20 +74,24 @@ def generate_test_description():
             f'stderr:\n' + result.stderr.decode('utf-8')
         )
 
-    centerpose_encoder_node = ComposableNode(
-        name='centerpose_encoder',
-        package='isaac_ros_dnn_image_encoder',
-        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
-        namespace=IsaacROSCenterPosePOLTest.generate_namespace(),
-        parameters=[{
-            'input_image_width': 600,
-            'input_image_height': 800,
-            'network_image_width': 512,
-            'network_image_height': 512,
-            'image_mean': [0.408, 0.447, 0.47],
-            'image_stddev': [0.289, 0.274, 0.278]
-        }],
-        remappings=[('encoded_tensor', 'tensor_pub')])
+    encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
+    centerpose_encoder_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+        ),
+        launch_arguments={
+            'input_image_width': '600',
+            'input_image_height': '800',
+            'network_image_width': '512',
+            'network_image_height': '512',
+            'image_mean': '[0.408, 0.447, 0.47]',
+            'image_stddev': '[0.289, 0.274, 0.278]',
+            'attach_to_shared_component_container': 'True',
+            'component_container_name': 'rclcpp_container',
+            'dnn_image_encoder_namespace': IsaacROSCenterPosePOLTest.generate_namespace(),
+            'tensor_output_topic': 'tensor_pub',
+        }.items(),
+    )
 
     centerpose_inference_node = ComposableNode(
         name='centerpose_inference',
@@ -127,13 +134,14 @@ def generate_test_description():
         package='rclcpp_components',
         executable='component_container_mt',
         composable_node_descriptions=[
-            centerpose_encoder_node, centerpose_inference_node,
+            centerpose_inference_node,
             centerpose_decoder_node,
         ],
         output='screen',
     )
 
-    return IsaacROSCenterPosePOLTest.generate_test_description([rclcpp_container])
+    return IsaacROSCenterPosePOLTest.generate_test_description(
+        [rclcpp_container, centerpose_encoder_launch])
 
 
 class IsaacROSCenterPosePOLTest(IsaacROSBaseTest):
