@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,16 +25,18 @@ import os
 import pathlib
 import time
 
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseArray
 from isaac_ros_test import IsaacROSBaseTest, JSONConversion
-
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 
 import pytest
 import rclpy
 
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CameraInfo, Image
 
 MODEL_FILE_NAME = 'dope_ketchup_pol.onnx'
 
@@ -45,19 +47,6 @@ MODEL_PATH = '/tmp/dope_trt_engine.plan'
 
 @pytest.mark.rostest
 def generate_test_description():
-    dope_encoder_node = ComposableNode(
-        name='dope_encoder',
-        package='isaac_ros_dnn_image_encoder',
-        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
-        namespace=IsaacROSDopePOLTest.generate_namespace(),
-        parameters=[{
-            'network_image_width': 640,
-            'network_image_height': 480,
-            'input_image_width': 852,
-            'input_image_height': 480
-        }],
-        remappings=[('encoded_tensor', 'tensor_pub')])
-
     dope_inference_node = ComposableNode(
         name='dope_inference',
         package='isaac_ros_tensor_rt',
@@ -89,16 +78,33 @@ def generate_test_description():
         remappings=[('belief_map_array', 'tensor_sub'),
                     ('dope/pose_array', 'poses')])
 
+    encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
+    dope_encoder_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+        ),
+        launch_arguments={
+            'input_image_width': '852',
+            'input_image_height': '480',
+            'network_image_width': '640',
+            'network_image_height': '480',
+            'attach_to_shared_component_container': 'True',
+            'component_container_name': 'dope_container',
+            'dnn_image_encoder_namespace': IsaacROSDopePOLTest.generate_namespace(),
+            'tensor_output_topic': 'tensor_pub',
+        }.items(),
+    )
+
     container = ComposableNodeContainer(
         name='dope_container',
         namespace='',
         package='rclcpp_components',
         executable='component_container_mt',
-        composable_node_descriptions=[dope_encoder_node, dope_inference_node, dope_decoder_node],
+        composable_node_descriptions=[dope_inference_node, dope_decoder_node],
         output='screen',
     )
 
-    return IsaacROSDopePOLTest.generate_test_description([container])
+    return IsaacROSDopePOLTest.generate_test_description([container, dope_encoder_launch])
 
 
 class IsaacROSDopePOLTest(IsaacROSBaseTest):
@@ -126,10 +132,13 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
 
         received_messages = {}
 
-        self.generate_namespace_lookup(['image', 'poses'])
+        self.generate_namespace_lookup(['image', 'camera_info', 'poses'])
 
         image_pub = self.node.create_publisher(
             Image, self.namespaces['image'], self.DEFAULT_QOS)
+
+        camera_info_pub = self.node.create_publisher(
+            CameraInfo, self.namespaces['camera_info'], self.DEFAULT_QOS)
 
         # The current DOPE decoder outputs PoseArray
         subs = self.create_logging_subscribers(
@@ -140,12 +149,17 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
             image = JSONConversion.load_image_from_json(json_file)
             image.header.stamp = self.node.get_clock().now().to_msg()
 
+            camera_info = CameraInfo()
+            camera_info.header = image.header
+            camera_info.distortion_model = 'plumb_bob'
+
             TIMEOUT = 60
             end_time = time.time() + TIMEOUT
             done = False
 
             while time.time() < end_time:
                 image_pub.publish(image)
+                camera_info_pub.publish(camera_info)
                 rclpy.spin_once(self.node, timeout_sec=(0.1))
                 if 'poses' in received_messages:
                     done = True

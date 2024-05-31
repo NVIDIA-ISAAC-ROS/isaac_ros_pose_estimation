@@ -1,0 +1,76 @@
+<?xml version="1.0"?>
+
+<!--
+ SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+
+ SPDX-License-Identifier: Apache-2.0
+-->
+
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>isaac_ros_foundationpose</name>
+  <version>3.0.0</version>
+  <description>FoundationPose 6D pose estimation</description>
+
+  <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
+  <license>Apache-2.0</license>
+  <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
+  <author>Yuankun Zhu</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>eigen</build_depend>
+
+  <depend>cv_bridge</depend>
+
+  <depend>isaac_ros_dnn_image_encoder</depend>
+  <depend>isaac_ros_nitros</depend>
+  <depend>isaac_ros_nitros_camera_info_type</depend>
+  <depend>isaac_ros_nitros_detection3_d_array_type</depend>
+  <depend>isaac_ros_tensor_list_interfaces</depend>
+  <depend>isaac_ros_nitros_point_cloud_type</depend>
+
+  <depend>message_filters</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>assimp</depend>
+  <depend>tf2_eigen</depend>
+
+  <build_depend>gxf_isaac_gems</build_depend>
+  <build_depend>isaac_ros_common</build_depend>
+  <build_depend>isaac_ros_gxf</build_depend>
+  <build_depend>image_transport</build_depend>
+
+  <exec_depend>gxf_isaac_foundationpose</exec_depend>
+  <exec_depend>isaac_ros_stereo_image_proc</exec_depend>
+  <exec_depend>isaac_ros_depth_image_proc</exec_depend>
+  <exec_depend>isaac_ros_managed_nitros</exec_depend>
+  <exec_depend>isaac_ros_tensor_rt</exec_depend>
+  <exec_depend>isaac_ros_nitros_topic_tools</exec_depend>
+  <exec_depend>isaac_ros_image_proc</exec_depend>
+  <exec_depend>isaac_ros_tensor_proc</exec_depend>
+  <exec_depend>isaac_ros_rtdetr</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>isaac_ros_test</test_depend>
+  <test_depend>sensor_msgs_py</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

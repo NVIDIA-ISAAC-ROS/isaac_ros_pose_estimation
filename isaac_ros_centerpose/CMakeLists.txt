@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,19 +29,22 @@ ament_auto_find_build_dependencies()
 ament_auto_add_library(centerpose_decoder_node SHARED src/centerpose_decoder_node.cpp)
 rclcpp_components_register_nodes(centerpose_decoder_node "nvidia::isaac_ros::centerpose::CenterPoseDecoderNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::centerpose::CenterPoseDecoderNode;$<TARGET_FILE:centerpose_decoder_node>\n")
+set_target_properties(centerpose_decoder_node PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  BUILD_RPATH_USE_ORIGIN TRUE
+  INSTALL_RPATH_USE_LINK_PATH TRUE
+)
 
 # Visualizer node
 ament_auto_add_library(centerpose_visualizer_node SHARED src/centerpose_visualizer_node.cpp)
 rclcpp_components_register_nodes(centerpose_visualizer_node "nvidia::isaac_ros::centerpose::CenterPoseVisualizerNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::centerpose::CenterPoseVisualizerNode;$<TARGET_FILE:centerpose_visualizer_node>\n")
+set_target_properties(centerpose_visualizer_node PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  BUILD_RPATH_USE_ORIGIN TRUE
+  INSTALL_RPATH_USE_LINK_PATH TRUE
+)
 
-### Install extensions built from source
-
-# CenterPose
-add_subdirectory(gxf/centerpose)
-install(TARGETS gxf_centerpose DESTINATION share/${PROJECT_NAME}/gxf/lib/centerpose)
-
-### End extensions
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()

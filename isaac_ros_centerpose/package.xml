@@ -21,10 +21,10 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_centerpose</name>
-  <version>2.1.0</version>
+  <version>3.0.0</version>
   <description>CenterPose: Pose Estimation using Deep Learning</description>
 
-  <maintainer email="kchinniah@nvidia.com">Kajanan Chinniah</maintainer>
+  <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>Apache-2.0</license>
   <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
   <author>Ethan Yu</author>
@@ -56,6 +56,8 @@
 
   <build_depend>isaac_ros_common</build_depend>
   <build_depend>isaac_ros_gxf</build_depend>
+
+  <exec_depend>gxf_isaac_centerpose</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

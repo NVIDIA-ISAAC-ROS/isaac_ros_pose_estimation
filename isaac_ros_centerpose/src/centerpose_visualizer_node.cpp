@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"isaac_ros_gxf", "gxf/lib/multimedia/libgxf_multimedia.so"},
   {"isaac_ros_gxf", "gxf/lib/serialization/libgxf_serialization.so"},
   {"isaac_ros_gxf", "gxf/lib/cuda/libgxf_cuda.so"},
-  {"isaac_ros_centerpose", "gxf/lib/centerpose/libgxf_centerpose.so"},
+  {"gxf_isaac_centerpose", "gxf/lib/libgxf_isaac_centerpose.so"},
 };
 
 const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {

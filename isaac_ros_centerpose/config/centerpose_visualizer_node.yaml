@@ -22,22 +22,18 @@ components:
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-    policy: 0
 - name: detections_input
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-    policy: 0
 - name: camera_model_input
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-    policy: 0
 - name: output
   type: nvidia::gxf::DoubleBufferTransmitter
   parameters:
     capacity: 12
-    policy: 0
 - name: allocator
   type: nvidia::gxf::UnboundedAllocator
 - name: centerpose_visualizer
@@ -73,7 +69,6 @@ components:
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 2
-    policy: 0
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: signal

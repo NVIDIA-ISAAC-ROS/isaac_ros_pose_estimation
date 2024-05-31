@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
@@ -159,20 +163,6 @@ def generate_launch_description():
     show_axes = LaunchConfiguration('show_axes')
     bounding_box_color = LaunchConfiguration('bounding_box_color')
 
-    centerpose_encoder_node = ComposableNode(
-        name='centerpose_encoder',
-        package='isaac_ros_dnn_image_encoder',
-        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
-        parameters=[{
-            'input_image_width': input_image_width,
-            'input_image_height': input_image_height,
-            'network_image_width': network_image_width,
-            'network_image_height': network_image_height,
-            'image_mean': encoder_image_mean,
-            'image_stddev': encoder_image_stddev,
-        }],
-        remappings=[('encoded_tensor', 'tensor_pub')])
-
     centerpose_inference_node = ComposableNode(
         name='centerpose_inference',
         package='isaac_ros_triton',
@@ -217,10 +207,31 @@ def generate_launch_description():
         package='rclcpp_components',
         executable='component_container_mt',
         composable_node_descriptions=[
-            centerpose_encoder_node, centerpose_inference_node,
-            centerpose_decoder_node, centerpose_visualizer_node],
+            centerpose_inference_node, centerpose_decoder_node,
+            centerpose_visualizer_node],
         output='screen',
     )
 
-    final_launch_container = launch_args + [rclcpp_container]
+    encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
+    centerpose_encoder_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+        ),
+        launch_arguments={
+            'input_image_width': input_image_width,
+            'input_image_height': input_image_height,
+            'network_image_width': network_image_width,
+            'network_image_height': network_image_height,
+            'image_mean': encoder_image_mean,
+            'image_stddev': encoder_image_stddev,
+            'attach_to_shared_component_container': 'True',
+            'component_container_name': 'centerpose_container',
+            'dnn_image_encoder_namespace': 'centerpose_encoder',
+            'image_input_topic': '/image',
+            'camera_info_input_topic': '/camera_info',
+            'tensor_output_topic': '/tensor_pub',
+        }.items(),
+    )
+
+    final_launch_container = launch_args + [rclcpp_container, centerpose_encoder_launch]
     return LaunchDescription(final_launch_container)

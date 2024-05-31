@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,14 +29,14 @@ ament_auto_find_build_dependencies()
 ament_auto_add_library(dope_decoder_node SHARED src/dope_decoder_node.cpp)
 rclcpp_components_register_nodes(dope_decoder_node "nvidia::isaac_ros::dope::DopeDecoderNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::dope::DopeDecoderNode;$<TARGET_FILE:dope_decoder_node>\n")
+set_target_properties(dope_decoder_node PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  BUILD_RPATH_USE_ORIGIN TRUE
+  INSTALL_RPATH_USE_LINK_PATH TRUE
+)
 
-### Install extensions built from source
-
-# DOPE
-add_subdirectory(gxf/dope)
-install(TARGETS gxf_dope DESTINATION share/${PROJECT_NAME}/gxf/lib/dope)
-
-### End extensions
+ament_python_install_package(${PROJECT_NAME})
+install(PROGRAMS scripts/dope_converter.py DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

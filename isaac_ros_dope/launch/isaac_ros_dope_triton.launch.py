@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 import launch
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
@@ -27,11 +31,11 @@ def generate_launch_description():
     launch_args = [
         DeclareLaunchArgument(
             'input_image_width',
-            default_value='640',
+            default_value='1920',
             description='The input image width'),
         DeclareLaunchArgument(
             'input_image_height',
-            default_value='480',
+            default_value='1080',
             description='The input image height'),
         DeclareLaunchArgument(
             'network_image_width',
@@ -92,6 +96,8 @@ def generate_launch_description():
     ]
 
     # DNN Image Encoder parameters
+    input_image_width = LaunchConfiguration('input_image_width')
+    input_image_height = LaunchConfiguration('input_image_height')
     network_image_width = LaunchConfiguration('network_image_width')
     network_image_height = LaunchConfiguration('network_image_height')
     encoder_image_mean = LaunchConfiguration('encoder_image_mean')
@@ -111,32 +117,27 @@ def generate_launch_description():
     # DOPE Decoder parameters
     object_name = LaunchConfiguration('object_name')
 
-    image_resize_node = ComposableNode(
-        package='isaac_ros_image_proc',
-        plugin='nvidia::isaac_ros::image_proc::ResizeNode',
-        name='image_resize',
-        parameters=[{
-                'output_width': network_image_width,
-                'output_height': network_image_width
-        }],
-    )
-
-    dope_encoder_node = ComposableNode(
-        name='dope_encoder',
-        package='isaac_ros_dnn_image_encoder',
-        plugin='nvidia::isaac_ros::dnn_inference::DnnImageEncoderNode',
-        parameters=[{
-            'input_image_width': network_image_width,
-            'input_image_height': network_image_height,
+    encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
+    dope_encoder_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+        ),
+        launch_arguments={
+            'input_image_width': input_image_width,
+            'input_image_height': input_image_height,
             'network_image_width': network_image_width,
             'network_image_height': network_image_height,
             'image_mean': encoder_image_mean,
             'image_stddev': encoder_image_stddev,
-        }],
-        remappings=[
-            ('image', 'resize/image'),
-            ('encoded_tensor', 'tensor_pub')
-        ])
+            'attach_to_shared_component_container': 'True',
+            'component_container_name': 'dope_container',
+            'dnn_image_encoder_namespace': 'dope_encoder',
+            'image_input_topic': '/image_rect',
+            'camera_info_input_topic': '/camera_info_rect',
+            'tensor_output_topic': '/tensor_pub',
+            'keep_aspect_ratio': 'False'
+        }.items(),
+    )
 
     dope_inference_node = ComposableNode(
         name='dope_inference',
@@ -169,11 +170,9 @@ def generate_launch_description():
         namespace='',
         package='rclcpp_components',
         executable='component_container_mt',
-        composable_node_descriptions=[
-            image_resize_node, dope_encoder_node, dope_inference_node, dope_decoder_node
-        ],
+        composable_node_descriptions=[dope_inference_node, dope_decoder_node],
         output='screen',
     )
 
-    final_launch_description = launch_args + [container]
+    final_launch_description = launch_args + [container, dope_encoder_launch]
     return launch.LaunchDescription(final_launch_description)

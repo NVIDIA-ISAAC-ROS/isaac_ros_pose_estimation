@@ -1,0 +1,556 @@
+%YAML 1.2
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+---
+name: sync
+components:
+- name: rgb_image_receiver
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1 # No messages should be queued for tracking, otherwise it will dirty the input during reset
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: rgb_image_receiver
+    min_size: 1
+- name: camera_model_receiver
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1 # No messages should be queued for tracking, otherwise it will dirty the input during reset
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: camera_model_receiver
+    min_size: 1
+- name: depth_receiver
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1 # No messages should be queued for tracking, otherwise it will dirty the input during reset
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: depth_receiver
+    min_size: 1
+- name: rgb_image_transmitter
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: rgb_image_transmitter
+    min_size: 1
+- name: camera_model_transmitter
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: camera_model_transmitter
+    min_size: 1
+- name: depth_transmitter
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: depth_transmitter
+    min_size: 1
+- type: nvidia::gxf::Synchronization
+  parameters:
+    inputs: [rgb_image_receiver, camera_model_receiver, depth_receiver]
+    outputs: [rgb_image_transmitter, camera_model_transmitter, depth_transmitter]
+---
+name: depth_message_compositor
+components:
+- name: video_buffer_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: video_buffer_input
+    min_size: 1
+- name: camera_model_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: camera_model_input
+    min_size: 1
+- name: depth_message_output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: depth_message_output
+    min_size: 1
+- name: depth_message_compositor
+  type: nvidia::isaac::CameraMessageCompositor
+  parameters:
+    video_buffer_input: video_buffer_input
+    camera_model_input: camera_model_input
+    camera_message_output: depth_message_output
+---
+name: depth_to_pointcloud
+components:
+- name: depth_receiver
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: depth_receiver
+    min_size: 1
+- name: point_cloud_transmitter
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: point_cloud_transmitter
+    min_size: 1
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 1
+    block_size: 33177600  # Image_shape(1920*1440) * points_per_pixel(3) * data_type (4)
+    num_blocks: 10
+- name: depth_to_pointcloud
+  type: nvidia::isaac_ros::depth_image_proc::DepthToPointCloud
+  parameters:
+    allocator: allocator
+    depth_receiver: depth_receiver
+    point_cloud_transmitter: point_cloud_transmitter
+    skip: 1
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 1
+---
+name: pose_broadcaster
+components:
+- name: poses_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: poses_input
+    min_size: 1
+- type: nvidia::gxf::Broadcast
+  parameters:
+    source: poses_input
+- name: broadcast_poses_1
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: broadcast_poses_1
+    min_size: 1
+- name: broadcast_poses_2
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: broadcast_poses_2
+    min_size: 1
+---
+name: camera_model_broadcaster
+components:
+- name: camera_model_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: camera_model_input
+    min_size: 1
+- type: nvidia::gxf::Broadcast
+  parameters:
+    source: camera_model_input
+- name: camera_model_output_1
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: camera_model_output_1
+    min_size: 1
+- name: camera_model_output_2
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: camera_model_output_2
+    min_size: 1
+---
+name: render
+components:
+- name: pose_array_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: point_cloud_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: rgb_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: camera_model_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: pose_array_input
+    min_size: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: point_cloud_input
+    min_size: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: rgb_input
+    min_size: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: camera_model_input
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: output
+    min_size: 1
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 1
+    block_size: 614400  # input_tensor_shape(160*160*6) * data_type(4)
+    num_blocks: 2  # two blocks per frame
+- type: nvidia::isaac_ros::FoundationposeRender
+  parameters:
+    pose_array_input: pose_array_input
+    point_cloud_input: point_cloud_input
+    rgb_input: rgb_input
+    camera_model_input: camera_model_input
+    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
+    texture_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/texture_map.png
+    mode: refine
+    output: output
+    allocator: allocator
+    min_depth: 0.1
+    max_depth: 4.0
+    cuda_stream_pool: utils/stream
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 2
+---
+name: refine_inference
+components:
+- name: tx
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: tx
+    min_size: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: rx
+    min_size: 1
+- name: rx
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: pool
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 1
+    block_size: 64  # pose_matrix_size(4*4) * data_type(4) 
+    num_blocks: 20  # two blocks per frame
+- type: nvidia::gxf::TensorRtInference
+  parameters:
+    model_file_path: /tmp/refine_model.onnx
+    engine_file_path: /tmp/refine_trt_engine.plan
+    input_tensor_names:
+        - [input_tensor1, input_tensor2]
+    input_binding_names:
+        - [input1, input2]
+    output_tensor_names:
+        - [output_tensor1, output_tensor2]
+    output_binding_names:
+        - [output1, output2]
+    pool: pool
+    cuda_stream_pool: utils/stream
+    dummy_rx: rx
+    rx: [rx]
+    tx: tx
+    force_engine_update: false
+    verbose: true
+    clock: utils/clock
+    # Estimated GPU mem usage for the engine generation
+    max_workspace_size: 67108864
+    enable_fp16: true
+    max_batch_size: 1
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: pool
+    min_blocks: 2
+---
+name: refine_stream_sync
+components:
+- name: rx
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: tx
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: rx
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: tx
+    min_size: 1
+- type: nvidia::gxf::CudaStreamSync
+  parameters:
+    rx: rx
+    tx: tx
+---
+name: transform
+components:
+- name: refined_poses_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: poses_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: sliced_output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- name: batched_output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: refined_poses_input
+    min_size: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: poses_input
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: sliced_output
+    min_size: 1
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 1
+    block_size: 64  # pose_matrix_size(4*4) * data_type(4) 
+    num_blocks: 20  # two blocks per frame
+- type: nvidia::isaac_ros::FoundationposeTransformation
+  parameters:
+    poses_input: poses_input
+    refined_poses_input: refined_poses_input
+    sliced_output: sliced_output
+    batched_output: batched_output
+    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
+    allocator: allocator
+    mode: tracking
+    cuda_stream_pool: utils/stream
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 1
+---
+name: decoder
+components:
+- name: pose_array_input
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- name: output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- name: pose_matrix_output
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: pose_array_input
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: output
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: pose_matrix_output
+    min_size: 1
+- name: allocator
+  type: nvidia::gxf::BlockMemoryPool
+  parameters:
+    storage_type: 1
+    block_size: 64  # Pose_shape(4*4) * data_type(4) 
+    num_blocks: 20  # two blocks per frame
+- type: nvidia::isaac_ros::FoundationposeDecoder
+  parameters:
+    pose_array_input: pose_array_input
+    output: output
+    pose_matrix_output: pose_matrix_output
+    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
+    allocator: allocator
+    mode: tracking
+    cuda_stream_pool: utils/stream
+- type: nvidia::gxf::MemoryAvailableSchedulingTerm
+  parameters:
+    allocator: allocator
+    min_blocks: 1
+---
+name: pose_sink
+components:
+- name: signal
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: signal
+    min_size: 1
+- name: sink
+  type: nvidia::isaac_ros::MessageRelay
+  parameters:
+    source: signal
+---
+name: pose_matrix_sink
+components:
+- name: signal
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: signal
+    min_size: 1
+- name: sink
+  type: nvidia::isaac_ros::MessageRelay
+  parameters:
+    source: signal
+---
+name: connections
+components:
+- type: nvidia::gxf::Connection
+  parameters:
+    source: sync/rgb_image_transmitter
+    target: render/rgb_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: sync/camera_model_transmitter
+    target: camera_model_broadcaster/camera_model_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: sync/depth_transmitter
+    target: depth_message_compositor/video_buffer_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: depth_message_compositor/depth_message_output
+    target: depth_to_pointcloud/depth_receiver
+- type: nvidia::gxf::Connection
+  parameters:
+    source: depth_to_pointcloud/point_cloud_transmitter
+    target: render/point_cloud_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: pose_broadcaster/broadcast_poses_1
+    target: render/pose_array_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: camera_model_broadcaster/camera_model_output_1
+    target: render/camera_model_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: camera_model_broadcaster/camera_model_output_2
+    target: depth_message_compositor/camera_model_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: render/output
+    target: refine_inference/rx
+- type: nvidia::gxf::Connection
+  parameters:
+    source: pose_broadcaster/broadcast_poses_2
+    target: transform/poses_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: refine_inference/tx
+    target: refine_stream_sync/rx
+- type: nvidia::gxf::Connection
+  parameters:
+    source: refine_stream_sync/tx
+    target: transform/refined_poses_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: transform/sliced_output
+    target: decoder/pose_array_input
+- type: nvidia::gxf::Connection
+  parameters:
+    source: decoder/output
+    target: pose_sink/signal
+- type: nvidia::gxf::Connection
+  parameters:
+    source: decoder/pose_matrix_output
+    target: pose_matrix_sink/signal
+---
+name: utils
+components:
+- name: clock
+  type: nvidia::gxf::RealtimeClock
+- type: nvidia::gxf::MultiThreadScheduler
+  parameters:
+    clock: clock
+    stop_on_deadlock: false
+    check_recession_period_ms: 1
+    worker_thread_number: 1
+- type: nvidia::gxf::JobStatistics
+  parameters:
+    clock: clock
+- name: stream
+  type: nvidia::gxf::CudaStreamPool
+  parameters:
+    dev_id: 0
+    stream_flags: 0
+    stream_priority: 0
+    reserved_size: 1
+    max_size: 5

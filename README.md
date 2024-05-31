@@ -1,6 +1,6 @@
 # Isaac ROS Pose Estimation
 
-Deep learned, hardware-accelerated 3D object pose estimation
+Deep learned, NVIDIA-accelerated 3D object pose estimation
 
 <div align="center"><a class="reference internal image-reference" href="https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/.github/main/resources/isaac_ros_docs/repositories_and_packages/isaac_ros_pose_estimation/dope_objects.png/"><img alt="image" src="https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/.github/main/resources/isaac_ros_docs/repositories_and_packages/isaac_ros_pose_estimation/dope_objects.png/" width="400px"/></a></div>
 
@@ -8,17 +8,33 @@ Deep learned, hardware-accelerated 3D object pose estimation
 
 [Isaac ROS Pose Estimation](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation)
 contains ROS 2 packages to predict the pose of an object.
+`isaac_ros_foundationpose` estimates the object’s pose using the 3D
+bounding cuboid dimensions of unknown object from an input image.
 `isaac_ros_dope` estimates the object’s pose using the 3D
 bounding cuboid dimensions of a known object in an input image.
 `isaac_ros_centerpose` estimates the object’s pose using the 3D
 bounding cuboid dimensions of unknown object instances in a known
-category of objects from an input image. `isaac_ros_dope` and
-`isaac_ros_centerpose` use GPU acceleration for DNN inference to
+category of objects from an input image.
+Those packages use GPU acceleration for DNN inference to
 estimate the pose of an object. The output prediction can be used by
 perception functions when fusing with the corresponding depth to provide
 the 3D pose of an object and distance for navigation or manipulation.
 
 <div align="center"><a class="reference internal image-reference" href="https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/.github/main/resources/isaac_ros_docs/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_pose_estimation_nodegraph.png/"><img alt="image" src="https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/.github/main/resources/isaac_ros_docs/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_pose_estimation_nodegraph.png/" width="500px"/></a></div>
+
+`isaac_ros_foundationpose` is used in a graph of nodes to estimate the pose of
+a novel object using 3D bounding cuboid dimensions. It’s developed on top of
+[FoundationPose](https://github.com/NVlabs/FoundationPose) model, which is
+a pre-trained deep learning model developed by NVLabs. FoundationPose
+is capable for both pose estimation and tracking on unseen objects without requiring fine-tuning,
+and its accuracy outperforms existing state-of-art methods.
+
+FoundationPose comprises two distinct models: the refine model and the score model.
+The refine model processes initial pose hypotheses, iteratively refining them, then
+passes these refined hypotheses to the score model, which selects and finalizes the pose estimation.
+Additionally, the refine model can serve for tracking, that updates the pose estimation based on
+new image inputs and the previous frame’s pose estimate. This tracking process is more efficient
+compared to pose estimation, which speeds exceeding 120 FPS on the Jetson Orin platform.
 
 `isaac_ros_dope` is used in a graph of nodes to estimate the pose of a
 known object with 3D bounding cuboid dimensions. To produce the
@@ -65,10 +81,11 @@ which can also be found at [Isaac ROS DNN Inference](https://github.com/NVIDIA-I
 
 ## Performance
 
-| Sample Graph<br/><br/>                                                                                                                                          | Input Size<br/><br/>    | AGX Orin<br/><br/>                                                                                                                                            | Orin NX<br/><br/>                                                                                                                                            | Orin Nano 8GB<br/><br/>                                                                                                                                       | x86_64 w/ RTX 4060 Ti<br/><br/>                                                                                                                                |
-|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [DOPE Pose Estimation Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/scripts/isaac_ros_dope_graph.py)<br/><br/><br/><br/>             | VGA<br/><br/><br/><br/> | [39.8 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-agx_orin.json)<br/><br/><br/>33 ms<br/><br/>        | [17.3 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-orin_nx.json)<br/><br/><br/>120 ms<br/><br/>       | –<br/><br/><br/><br/>                                                                                                                                         | [89.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-nuc_4060ti.json)<br/><br/><br/>15 ms<br/><br/>       |
-| [Centerpose Pose Estimation Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/scripts/isaac_ros_centerpose_graph.py)<br/><br/><br/><br/> | VGA<br/><br/><br/><br/> | [36.1 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-agx_orin.json)<br/><br/><br/>5.7 ms<br/><br/> | [19.4 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-orin_nx.json)<br/><br/><br/>7.4 ms<br/><br/> | [13.8 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-orin_nano.json)<br/><br/><br/>12 ms<br/><br/> | [50.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-nuc_4060ti.json)<br/><br/><br/>14 ms<br/><br/> |
+| Sample Graph<br/><br/>                                                                                                                                                                                              | Input Size<br/><br/>     | AGX Orin<br/><br/>                                                                                                                                                      | Orin NX<br/><br/>                                                                                                                                                   | Orin Nano 8GB<br/><br/>                                                                                                                                               | x86_64 w/ RTX 4060 Ti<br/><br/>                                                                                                                                       | x86_64 w/ RTX 4090<br/><br/>                                                                                                                                            |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [FoundationPose Pose Estimation Node](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/benchmarks/isaac_ros_foundationpose_benchmark/scripts/isaac_ros_foundationpose_node.py)<br/><br/><br/><br/> | 720p<br/><br/><br/><br/> | [1.72 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_foundationpose_node-agx_orin.json)<br/><br/><br/>690 ms @ 30Hz<br/><br/> | –<br/><br/><br/><br/>                                                                                                                                               | –<br/><br/><br/><br/>                                                                                                                                                 | –<br/><br/><br/><br/>                                                                                                                                                 | [7.02 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_foundationpose_node-x86_4090.json)<br/><br/><br/>170 ms @ 30Hz<br/><br/> |
+| [DOPE Pose Estimation Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/benchmarks/isaac_ros_dope_benchmark/scripts/isaac_ros_dope_graph.py)<br/><br/><br/><br/>                             | VGA<br/><br/><br/><br/>  | [41.3 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-agx_orin.json)<br/><br/><br/>42 ms @ 30Hz<br/><br/>           | [17.5 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-orin_nx.json)<br/><br/><br/>76 ms @ 30Hz<br/><br/>        | –<br/><br/><br/><br/>                                                                                                                                                 | [85.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-nuc_4060ti.json)<br/><br/><br/>24 ms @ 30Hz<br/><br/>       | [199 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_dope_graph-x86_4090.json)<br/><br/><br/>14 ms @ 30Hz<br/><br/>            |
+| [Centerpose Pose Estimation Graph](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/benchmarks/isaac_ros_centerpose_benchmark/scripts/isaac_ros_centerpose_graph.py)<br/><br/><br/><br/>           | VGA<br/><br/><br/><br/>  | [36.3 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-agx_orin.json)<br/><br/><br/>4.8 ms @ 30Hz<br/><br/>    | [19.7 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-orin_nx.json)<br/><br/><br/>4.9 ms @ 30Hz<br/><br/> | [13.8 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-orin_nano.json)<br/><br/><br/>7.4 ms @ 30Hz<br/><br/> | [50.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-nuc_4060ti.json)<br/><br/><br/>23 ms @ 30Hz<br/><br/> | [50.2 fps](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_benchmark/blob/main/results/isaac_ros_centerpose_graph-x86_4090.json)<br/><br/><br/>20 ms @ 30Hz<br/><br/>     |
 
 ---
 
@@ -82,7 +99,6 @@ Please visit the [Isaac ROS Documentation](https://nvidia-isaac-ros.github.io/re
 
 * [`isaac_ros_centerpose`](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_centerpose/index.html)
   * [Quickstart](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_centerpose/index.html#quickstart)
-  * [Use Different Models](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_centerpose/index.html#use-different-models)
   * [Troubleshooting](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_centerpose/index.html#troubleshooting)
   * [API](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_centerpose/index.html#api)
 * [`isaac_ros_dope`](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_dope/index.html)
@@ -91,7 +107,12 @@ Please visit the [Isaac ROS Documentation](https://nvidia-isaac-ros.github.io/re
   * [Use Different Models](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_dope/index.html#use-different-models)
   * [Troubleshooting](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_dope/index.html#troubleshooting)
   * [API](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_dope/index.html#api)
+* [`isaac_ros_foundationpose`](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_foundationpose/index.html)
+  * [Quickstart](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_foundationpose/index.html#quickstart)
+  * [Try More Examples](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_foundationpose/index.html#try-more-examples)
+  * [Troubleshooting](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_foundationpose/index.html#troubleshooting)
+  * [API](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_pose_estimation/isaac_ros_foundationpose/index.html#api)
 
 ## Latest
 
-Update 2023-10-18: Adding NITROS CenterPose decoder.
+Update 2024-05-30: Added FoundationPose pose estimation package
