@@ -134,8 +134,8 @@ def generate_launch_description():
             'disable_padding': True
         }],
         remappings=[
-            ('image', 'front_stereo_camera/left_rgb/image_raw'),
-            ('camera_info', 'front_stereo_camera/left_rgb/camerainfo')
+            ('image', 'front_stereo_camera/left/image_rect_color'),
+            ('camera_info', 'front_stereo_camera/left/camera_info')
         ]
     )
     pad_node = ComposableNode(
@@ -277,10 +277,10 @@ def generate_launch_description():
             'disable_padding': False
         }],
         remappings=[
-            ('image', 'front_stereo_camera/left_rgb/image_raw'),
-            ('camera_info', 'front_stereo_camera/left_rgb/camerainfo'),
-            ('resize/image', 'front_stereo_camera/left_rgb/image_raw_resized'),
-            ('resize/camera_info', 'front_stereo_camera/left_rgb/camera_info')
+            ('image', 'front_stereo_camera/left/image_rect_color'),
+            ('camera_info', 'front_stereo_camera/left/camera_info'),
+            ('resize/image', 'front_stereo_camera/left/image_rect_color_resized'),
+            ('resize/camera_info', 'front_stereo_camera/left/camera_info_resized')
         ]
     )
     resize_right_ess_size = ComposableNode(
@@ -297,10 +297,10 @@ def generate_launch_description():
             'disable_padding': False
         }],
         remappings=[
-            ('image', 'front_stereo_camera/right_rgb/image_raw'),
-            ('camera_info', 'front_stereo_camera/right_rgb/camerainfo'),
-            ('resize/image', 'front_stereo_camera/right_rgb/image_raw_resized'),
-            ('resize/camera_info', 'front_stereo_camera/right_rgb/camera_info')
+            ('image', 'front_stereo_camera/right/image_rect_color'),
+            ('camera_info', 'front_stereo_camera/right/camera_info'),
+            ('resize/image', 'front_stereo_camera/right/image_rect_color_resized'),
+            ('resize/camera_info', 'front_stereo_camera/right/camera_info_resized')
         ]
     )
 
@@ -313,10 +313,10 @@ def generate_launch_description():
                      'threshold': ess_depth_threshold
                      }],
         remappings=[
-            ('left/image_rect', 'front_stereo_camera/left_rgb/image_raw_resized'),
-            ('right/image_rect', 'front_stereo_camera/right_rgb/image_raw_resized'),
-            ('left/camera_info', 'front_stereo_camera/left_rgb/camera_info'),
-            ('right/camera_info', 'front_stereo_camera/right_rgb/camera_info')
+            ('left/image_rect', 'front_stereo_camera/left/image_rect_color_resized'),
+            ('right/image_rect', 'front_stereo_camera/right/image_rect_color_resized'),
+            ('left/camera_info', 'front_stereo_camera/left/camera_info_resized'),
+            ('right/camera_info', 'front_stereo_camera/right/camera_info_resized')
         ]
     )
     disparity_to_depth_node = ComposableNode(
@@ -351,8 +351,8 @@ def generate_launch_description():
         }],
         remappings=[
             ('pose_estimation/depth_image', 'depth_image'),
-            ('pose_estimation/image', 'front_stereo_camera/left_rgb/image_raw_resized'),
-            ('pose_estimation/camera_info', 'front_stereo_camera/left_rgb/camera_info'),
+            ('pose_estimation/image', 'front_stereo_camera/left/image_rect_color_resized'),
+            ('pose_estimation/camera_info', 'front_stereo_camera/left/camera_info_resized'),
             ('pose_estimation/segmentation', 'segmentation'),
             ('pose_estimation/output', 'output')]
         )

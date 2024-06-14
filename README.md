@@ -6,15 +6,15 @@ Deep learned, NVIDIA-accelerated 3D object pose estimation
 
 ## Overview
 
-[Isaac ROS Pose Estimation](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation)
-contains ROS 2 packages to predict the pose of an object.
-`isaac_ros_foundationpose` estimates the object’s pose using the 3D
-bounding cuboid dimensions of unknown object from an input image.
-`isaac_ros_dope` estimates the object’s pose using the 3D
-bounding cuboid dimensions of a known object in an input image.
-`isaac_ros_centerpose` estimates the object’s pose using the 3D
-bounding cuboid dimensions of unknown object instances in a known
-category of objects from an input image.
+[Isaac ROS Pose Estimation](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation)  contains
+three ROS 2 packages to predict the pose of an object. Please refer the following table to see the differences of them:
+
+| Node                       | Novel Object wo/ Retraining   | TAO Support   | Speed   | Quality   | Maturity    |
+|----------------------------|-------------------------------|---------------|---------|-----------|-------------|
+| `isaac_ros_foundationpose` | ✓                             | N/A           | Fast    | Best      | New         |
+| `isaac_ros_dope`           | x                             | x             | Fastest | Good      | Time-tested |
+| `isaac_ros_centerpose`     | x                             | ✓             | Faster  | Better    | Established |
+
 Those packages use GPU acceleration for DNN inference to
 estimate the pose of an object. The output prediction can be used by
 perception functions when fusing with the corresponding depth to provide
