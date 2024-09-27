@@ -244,12 +244,6 @@ def generate_launch_description():
     )
 
     # Convert Detection2DArray from RT-DETR to a binary segmentation mask
-    detection2_d_array_filter_node = ComposableNode(
-        name='detection2_d_array_filter',
-        package='isaac_ros_foundationpose',
-        plugin='nvidia::isaac_ros::foundationpose::Detection2DArrayFilter',
-        remappings=[('detection2_d_array', 'detections_output')]
-    )
     detection2_d_to_mask_node = ComposableNode(
         name='detection2_d_to_mask',
         package='isaac_ros_foundationpose',
@@ -427,7 +421,6 @@ def generate_launch_description():
             rtdetr_preprocessor_node,
             tensor_rt_node,
             rtdetr_decoder_node,
-            detection2_d_array_filter_node,
             detection2_d_to_mask_node,
             resize_mask_node,
             resize_left_ess_size,
