@@ -18,6 +18,7 @@
 #ifndef ISAAC_ROS_DOPE__DOPE_DECODER_NODE_HPP_
 #define ISAAC_ROS_DOPE__DOPE_DECODER_NODE_HPP_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,7 @@
 #include "isaac_ros_tensor_list_interfaces/msg/tensor_list.hpp"
 #include "isaac_ros_nitros/nitros_node.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "tf2_ros/transform_broadcaster.h"
 
 namespace nvidia
 {
@@ -48,6 +50,8 @@ public:
 
   void postLoadGraphCallback() override;
 
+  void DopeDecoderDetectionCallback(const gxf_context_t context, nitros::NitrosTypeBase & msg);
+
 private:
   // The name of the YAML configuration file
   const std::string configuration_file_;
@@ -55,11 +59,35 @@ private:
   // The class name of the object we're locating
   const std::string object_name_;
 
+  // The frame name for TF publishing
+  const std::string tf_frame_name_;
+
+  // Boolean value indicating option to pubishing to TF tree
+  const bool enable_tf_publishing_;
+
+  // The minimum value of a peak in a belief map
+  const double map_peak_threshold_;
+
+  // The maximum angle threshold for affinity mapping of corners to centroid
+  const double affinity_map_angle_threshold_;
+
+  // Double indicating that dope outputs pose rotated by N degrees along y axis
+  const double rotation_y_axis_;
+
+  // Double indicating that dope outputs pose rotated by N degrees along x axis
+  const double rotation_x_axis_;
+
+  // Double indicating that dope outputs pose rotated by N degrees along z axis
+  const double rotation_z_axis_;
+
   // The dimensions of the cuboid around the object we're locating
   std::vector<double> object_dimensions_;
 
   // The camera matrix used to capture the input images
   std::vector<double> camera_matrix_;
+
+  // The transform broadcaster for when TF publishing for poses is enabled
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
 
 }  // namespace dope

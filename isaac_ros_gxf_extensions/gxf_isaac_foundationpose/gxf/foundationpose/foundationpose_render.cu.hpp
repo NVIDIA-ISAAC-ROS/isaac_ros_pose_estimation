@@ -38,6 +38,11 @@ void clamp(cudaStream_t stream, float* input, float min_value, float max_value, 
 void threshold_and_downscale_pointcloud(
     cudaStream_t stream, float* pointcloud_input, float* pose_array_input, int N, int n_points, float downscale_factor,
     float min_depth, float max_depth);
+void transform_pts(
+    cudaStream_t stream, float* output, const float* pts, const float* tfs, int pts_num, int pts_channel, int tfs_num, int tfs_dim);
+void generate_pose_clip(
+    cudaStream_t stream, float* d_pose_clip, const float* d_pose, const float* bbox2d, const float* d_mesh_vertices,
+    const Eigen::Matrix4f& projection_mat, int rgb_H, int rgb_W, int n_pts, int n_poses);
 void concat(cudaStream_t stream, float* input_a, float* input_b, float* output, int N, int H, int W, int C1, int C2);
 
 void rasterize(

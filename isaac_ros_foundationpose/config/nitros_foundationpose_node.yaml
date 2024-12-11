@@ -21,7 +21,7 @@ components:
 - name: rgb_image_receiver
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
-    capacity: 12 # Synchronization queue size set to 12 to allow for one out of order message
+    capacity: 12
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: rgb_image_receiver
@@ -29,7 +29,7 @@ components:
 - name: camera_model_receiver
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
-    capacity: 12 # Synchronization queue size set to 12 to allow for one out of order message
+    capacity: 12
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: camera_model_receiver
@@ -37,7 +37,7 @@ components:
 - name: mask_receiver
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
-    capacity: 12 # Synchronization queue size set to 12 to allow for one out of order message
+    capacity: 12
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: mask_receiver
@@ -45,7 +45,7 @@ components:
 - name: depth_receiver
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
-    capacity: 12 # Synchronization queue size set to 12 to allow for one out of order message
+    capacity: 12
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: depth_receiver
@@ -569,7 +569,7 @@ components:
     verbose: true
     clock: utils/clock
     max_workspace_size: 6710886400
-    enable_fp16: true
+    enable_fp16: false
     max_batch_size: 42
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
@@ -815,7 +815,7 @@ components:
     verbose: true
     clock: utils/clock
     max_workspace_size: 6710886400
-    enable_fp16: true
+    enable_fp16: false
     max_batch_size: 252
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:

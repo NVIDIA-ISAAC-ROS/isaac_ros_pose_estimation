@@ -49,6 +49,13 @@ if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 
+  # Gtest for decoder_node
+  ament_add_gtest(centerpose_decoder_node_test test/centerpose_decoder_node_test.cpp)
+  target_link_libraries(centerpose_decoder_node_test centerpose_decoder_node)
+  target_include_directories(centerpose_decoder_node_test PUBLIC include/isaac_ros_centerpose/)
+  target_include_directories(centerpose_decoder_node_test PUBLIC /usr/src/googletest/googlemock/include/)
+  ament_target_dependencies(centerpose_decoder_node_test rclcpp)
+  ament_target_dependencies(centerpose_decoder_node_test isaac_ros_nitros)
   # The FindPythonInterp and FindPythonLibs modules are removed
   if(POLICY CMP0148)
     cmake_policy(SET CMP0148 OLD)
@@ -58,5 +65,11 @@ if(BUILD_TESTING)
   add_launch_test(test/test_centerpose_pol.py TIMEOUT "600")
   add_launch_test(test/test_centerpose_pol_triton.py TIMEOUT "600")
 endif()
+
+
+# Embed versioning information into installed files
+ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
+include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
+generate_version_info(${PROJECT_NAME})
 
 ament_auto_package(INSTALL_TO_SHARE config launch)

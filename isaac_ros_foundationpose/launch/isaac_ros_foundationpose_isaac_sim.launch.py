@@ -42,7 +42,8 @@ ISAAC_ROS_MODELS_PATH = os.path.join(ISAAC_ROS_ASSETS_PATH, 'models')
 ISAAC_ROS_FP_MESHES_PATH = os.path.join(ISAAC_ROS_ASSETS_PATH,
                                         'isaac_ros_foundationpose')
 STEREO_DISPARITY_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH,
-                                            'dnn_stereo_disparity', 'dnn_stereo_disparity_v4.0.0')
+                                            'dnn_stereo_disparity',
+                                            'dnn_stereo_disparity_v4.1.0_onnx')
 SYNTHETICA_DETR_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'synthetica_detr')
 FOUDNATIONPOSE_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'foundationpose')
 REFINE_ENGINE_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'refine_trt_engine.plan')
@@ -94,7 +95,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'ess_depth_threshold',
-            default_value='0.35',
+            default_value='0.4',
             description='Threshold value ranges between 0.0 and 1.0 '
                         'for filtering disparity with confidence.'),
 
@@ -226,16 +227,22 @@ def generate_launch_description():
     )
 
     # Convert Detection2DArray from RT-DETR to a binary segmentation mask
+    detection2_d_array_filter_node = ComposableNode(
+        name='detection2_d_array_filter',
+        package='isaac_ros_foundationpose',
+        plugin='nvidia::isaac_ros::foundationpose::Detection2DArrayFilter',
+        remappings=[('detection2_d_array', 'detections_output')]
+    )
     detection2_d_to_mask_node = ComposableNode(
         name='detection2_d_to_mask',
         package='isaac_ros_foundationpose',
         plugin='nvidia::isaac_ros::foundationpose::Detection2DToMask',
         parameters=[{
             'mask_width': int(SIM_IMAGE_WIDTH/SIM_TO_RT_DETR_RATIO),
-            'mask_height': int(SIM_IMAGE_HEIGHT/SIM_TO_RT_DETR_RATIO),
-            'sub_detection2_d_array': True}],
-        remappings=[('detection2_d_array', 'detections_output'),
-                    ('segmentation', 'rt_detr_segmentation')])
+            'mask_height': int(SIM_IMAGE_HEIGHT/SIM_TO_RT_DETR_RATIO)
+        }],
+        remappings=[('segmentation', 'rt_detr_segmentation')]
+    )
 
     # Resize segmentation mask to ESS model image size so it can be used by FoundationPose
     # FoundationPose requires depth, rgb image and segmentation mask to be of the same size
@@ -378,6 +385,7 @@ def generate_launch_description():
             rtdetr_preprocessor_node,
             tensor_rt_node,
             rtdetr_decoder_node,
+            detection2_d_array_filter_node,
             detection2_d_to_mask_node,
             resize_mask_node,
             resize_left_ess_size,

@@ -39,19 +39,19 @@ def generate_launch_description():
             description='The input image height'),
         DeclareLaunchArgument(
             'network_image_width',
-            default_value='640',
+            default_value='1280',
             description='The input image width that the network expects'),
         DeclareLaunchArgument(
             'network_image_height',
-            default_value='480',
+            default_value='720',
             description='The input image height that the network expects'),
         DeclareLaunchArgument(
             'encoder_image_mean',
-            default_value='[0.5, 0.5, 0.5]',
+            default_value='[0.485, 0.456, 0.406]',
             description='The mean for image normalization'),
         DeclareLaunchArgument(
             'encoder_image_stddev',
-            default_value='[0.5, 0.5, 0.5]',
+            default_value='[0.229, 0.224, 0.225]',
             description='The standard deviation for image normalization'),
         DeclareLaunchArgument(
             'model_name',
@@ -93,6 +93,14 @@ def generate_launch_description():
             'object_name',
             default_value='Ketchup',
             description='The object class that the DOPE network is detecting'),
+        DeclareLaunchArgument(
+            'map_peak_threshold',
+            default_value='0.1',
+            description='The minimum value of a peak in a DOPE belief map'),
+        DeclareLaunchArgument(
+            'enable_tf_publishing',
+            default_value='False',
+            description='Whether Dope Decoder will broadcast poses to the TF tree or not'),
     ]
 
     # DNN Image Encoder parameters
@@ -116,6 +124,8 @@ def generate_launch_description():
 
     # DOPE Decoder parameters
     object_name = LaunchConfiguration('object_name')
+    enable_tf_publishing = LaunchConfiguration('enable_tf_publishing')
+    map_peak_threshold = LaunchConfiguration('map_peak_threshold')
 
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     dope_encoder_launch = IncludeLaunchDescription(
@@ -161,9 +171,13 @@ def generate_launch_description():
         plugin='nvidia::isaac_ros::dope::DopeDecoderNode',
         parameters=[{
             'object_name': object_name,
+            'enable_tf_publishing': enable_tf_publishing,
+            'map_peak_threshold': map_peak_threshold
         }],
         remappings=[('belief_map_array', 'tensor_sub'),
-                    ('dope/pose_array', 'poses')])
+                    ('dope/detections', 'detections'),
+                    ('camera_info', '/dope_encoder/crop/camera_info')]
+    )
 
     container = ComposableNodeContainer(
         name='dope_container',

@@ -23,6 +23,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 
+#include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_nitros_camera_info_type/nitros_camera_info.hpp"
 #include "isaac_ros_nitros_detection3_d_array_type/nitros_detection3_d_array.hpp"
 #include "isaac_ros_nitros_image_type/nitros_image.hpp"
@@ -145,6 +146,9 @@ FoundationPoseNode::FoundationPoseNode(rclcpp::NodeOptions options)
   min_depth_(declare_parameter<float>("min_depth", 0.1)),
   max_depth_(declare_parameter<float>("max_depth", 4.0)),
   refine_iterations_(declare_parameter<int>("refine_iterations", 1)),
+  symmetry_planes_(
+    declare_parameter<StringList>("symmetry_planes", StringList())),
+
   refine_model_file_path_(
     declare_parameter<std::string>("refine_model_file_path", "/tmp/refine_model.onnx")),
   refine_engine_file_path_(
@@ -175,6 +179,34 @@ FoundationPoseNode::FoundationPoseNode(rclcpp::NodeOptions options)
   tf_frame_name_(declare_parameter<std::string>("tf_frame_name", "fp_object"))
 {
   RCLCPP_DEBUG(get_logger(), "[FoundationPoseNode] Constructor");
+
+  // This function sets the QoS parameter for publishers and subscribers setup by this NITROS node
+  rclcpp::QoS depth_qos_ = ::isaac_ros::common::AddQosParameter(
+    *this, "DEFAULT",
+    "depth_qos");
+  rclcpp::QoS color_qos_ = ::isaac_ros::common::AddQosParameter(
+    *this, "DEFAULT",
+    "color_qos");
+  rclcpp::QoS color_info_qos_ = ::isaac_ros::common::AddQosParameter(
+    *this, "DEFAULT",
+    "color_info_qos");
+  rclcpp::QoS segmentation_qos_ = ::isaac_ros::common::AddQosParameter(
+    *this, "DEFAULT",
+    "segmentation_qos");
+  for (auto & config : config_map_) {
+    if (config.second.topic_name == INPUT_DEPTH_TOPIC_NAME) {
+      config.second.qos = depth_qos_;
+    }
+    if (config.second.topic_name == INPUT_RGB_IMAGE_TOPIC_NAME) {
+      config.second.qos = color_qos_;
+    }
+    if (config.second.topic_name == INPUT_CAMERA_INFO_TOPIC_NAME) {
+      config.second.qos = color_info_qos_;
+    }
+    if (config.second.topic_name == INPUT_SEGMENTATION_TOPIC_NAME) {
+      config.second.qos = segmentation_qos_;
+    }
+  }
 
   // Add callback function for FoundationPose Detection3D array to broadcast to ROS TF tree
   config_map_[OUTPUT_POSE_COMPONENT_KEY].callback = std::bind(
@@ -363,6 +395,7 @@ void FoundationPoseNode::postLoadGraphCallback()
     "refine_inference", "nvidia::gxf::TensorRtInference", "output_binding_names",
     refine_output_binding_names_);
 
+
   // Set the score network TensorRT configs from parameter
   getNitrosContext().setParameterStr(
     "score_inference", "nvidia::gxf::TensorRtInference", "model_file_path",
@@ -387,6 +420,24 @@ void FoundationPoseNode::postLoadGraphCallback()
   getNitrosContext().setParameter1DStrVector(
     "score_inference", "nvidia::gxf::TensorRtInference", "output_binding_names",
     score_output_binding_names_);
+
+  if (symmetry_planes_.size() > 0) {
+    getNitrosContext().setParameter1DStrVector(
+      "sampling", "nvidia::isaac_ros::FoundationposeSampling", "symmetry_planes",
+      symmetry_planes_);
+
+    // Number of symmetry poses that could treat as the same pose
+    auto symmetry_poses = std::min(static_cast<int>(std::pow(2, symmetry_planes_.size())), 4);
+    int refine_max_batch_size = 252 / 6 / symmetry_poses;
+    getNitrosContext().setParameterInt32(
+      "refine_inference", "nvidia::gxf::TensorRtInference", "max_batch_size",
+      refine_max_batch_size);
+
+    int score_max_batch_size = refine_max_batch_size * 6;
+    getNitrosContext().setParameterInt32(
+      "score_inference", "nvidia::gxf::TensorRtInference", "max_batch_size",
+      score_max_batch_size);
+  }
 }
 
 void FoundationPoseNode::FoundationPoseDetectionCallback(

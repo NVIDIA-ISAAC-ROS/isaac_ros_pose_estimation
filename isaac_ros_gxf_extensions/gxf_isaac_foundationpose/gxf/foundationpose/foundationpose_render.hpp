@@ -92,8 +92,10 @@ class FoundationposeRender : public gxf::Codelet {
   int texture_map_width_;
   float mesh_diameter_;
 
+  float* pose_device_;
   // Input data (GPU) for rendering kernels
   float* pose_clip_device_;
+  float* mesh_vertices_device_;
   int32_t* mesh_faces_device_;
   float* texcoords_device_;
   float* pts_cam_device_;
@@ -107,10 +109,12 @@ class FoundationposeRender : public gxf::Codelet {
   float* xyz_map_device_;
   float* transformed_rgb_device_;
   float* transformed_xyz_map_device_;
+  uint8_t* wp_image_device_;
+  float* trans_matrix_device_;
+  float* bbox2d_device_;
+
   nvcv::Tensor render_rgb_tensor_;
   nvcv::Tensor render_xyz_map_tensor_;
-  std::unordered_map<int, float*> transformed_xyz_map_cache_;
-  std::unordered_map<int, float*> transformed_rgb_cache_;
 
   float* score_rendered_output_device_;
   float* score_original_output_device_;
