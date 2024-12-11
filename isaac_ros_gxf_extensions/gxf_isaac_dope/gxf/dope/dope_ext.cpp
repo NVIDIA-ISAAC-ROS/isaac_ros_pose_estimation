@@ -14,8 +14,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+
 #include <string>
 
+#include "detection3_d_array_message.hpp"
 #include "gxf/core/gxf.h"
 #include "gxf/std/extension_factory_helper.hpp"
 
@@ -33,6 +35,13 @@ GXF_EXT_FACTORY_ADD(0x9bd4f8c4182a11ed, 0x861d0242ac120002,
                     nvidia::isaac_ros::dope::DopeDecoder, nvidia::gxf::Codelet,
                     "Codelet to decode DOPE output.");
 
+GXF_EXT_FACTORY_ADD_0(0x2fd70869462e45f0, 0xefd09edc396d49bb,
+                      nvidia::isaac::Vector3f, "3 Dimensional Vector");
+
+GXF_EXT_FACTORY_ADD_0(0x84a3c15ccecb43a6, 0xed1fe7ab06a448ee,
+                      nvidia::isaac::ObjectHypothesis,
+                      "Score and class id of detected object");
+
 GXF_EXT_FACTORY_END()
 
-} // extern "C"
+}  // extern "C"

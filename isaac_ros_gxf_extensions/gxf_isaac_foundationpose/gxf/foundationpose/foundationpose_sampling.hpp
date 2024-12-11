@@ -34,6 +34,7 @@
 
 #include "foundationpose_sampling.cu.hpp"
 
+
 namespace nvidia {
 namespace isaac_ros {
 
@@ -59,6 +60,7 @@ class FoundationposeSampling : public gxf::Codelet {
   gxf::Parameter<gxf::Handle<gxf::CudaStreamPool>> cuda_stream_pool_;
   gxf::Parameter<uint32_t> max_hypothesis_;
   gxf::Parameter<float> min_depth_;
+  gxf::Parameter<std::vector<std::string>> symmetry_planes_;
   gxf::Handle<gxf::CudaStream> stream_;
 
   float* erode_depth_device_;

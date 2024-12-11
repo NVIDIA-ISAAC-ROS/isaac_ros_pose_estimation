@@ -17,22 +17,26 @@
 
 #include "dope_decoder.hpp"
 
+#include <cuda_runtime.h>
 #include <Eigen/Dense>
 
-#include <cuda_runtime.h>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
 
+#include "detection3_d_array_message/detection3_d_array_message.hpp"
 #include "opencv2/calib3d.hpp"
 #include "opencv2/core/eigen.hpp"
 #include "opencv2/core/mat.hpp"
 #include "opencv2/imgproc.hpp"
 
-#include <string>
-
+#include "gxf/core/parameter_parser_std.hpp"
 #include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
-#include "gxf/core/parameter_parser_std.hpp"
 #include "gxf/std/tensor.hpp"
 #include "gxf/std/timestamp.hpp"
+
 
 namespace nvidia {
 namespace isaac_ros {
@@ -55,23 +59,24 @@ constexpr size_t kNumVertexChannel = kNumCorners + 1;
 constexpr float kGaussianSigma = 3.0;
 // Minimum acceptable sum of averaging weights
 constexpr float kMinimumWeightSum = 1e-6;
-constexpr float kMapPeakThreshhold = 0.01;
-constexpr float kPeakWeightThreshhold = 0.1;
-constexpr float kAffinityMapAngleThreshhold = 0.5;
 // Offset added to belief map pixel coordinate, constant for the fixed input
 // image size
 // https://github.com/NVlabs/Deep_Object_Pose/blob/master/src/dope/inference/detector.py
 // line 343
 constexpr float kOffsetDueToUpsampling = 0.4395f;
+// Minimum required blurred belief map value at the peaks
+constexpr float kBlurredPeakThreshold = 0.01;
 // The original image is kImageToMapScale larger in each dimension than the
 // output tensor from the DNN.
 constexpr float kImageToMapScale = 8.0f;
-// From the requirements listed for pnp::ComputeCameraPoseEpnp.
-constexpr size_t kRequiredPointsForPnP = 6;
+// Require all 9 vertices to publish a pose
+constexpr size_t kRequiredPointsForPnP = 9;
 // Placeholder for unidentify peak ids in DopeObject
 constexpr int kInvalidId = -1;
 // Placeholder for unknown best distance from centroid to peak in DopeObject
 constexpr float kInvalidDist = std::numeric_limits<float>::max();
+// For converting sizes in cm to m in ExtractPose and when publishing bbox sizes.
+constexpr double kCentimeterToMeter = 100.0;
 
 // The list of keypoint indices (0-8, 8 is centroid) and their corresponding 2d
 // pixel coordinates as columns in a matrix.
@@ -93,7 +98,7 @@ struct DopeObject {
 };
 
 struct Pose3d {
-public:
+ public:
   Eigen::Vector3d translation;
   Eigen::Quaterniond rotation;
 
@@ -106,7 +111,7 @@ public:
 };
 
 // Returns pixel mask for local maximums in single - channel image src
-void IsolateMaxima(const cv::Mat &src, cv::Mat &mask) {
+void IsolateMaxima(const cv::Mat& src, cv::Mat& mask) {
   // Find pixels that are equal to the local neighborhood maxima
   cv::dilate(src, mask, cv::Mat());
   cv::compare(src, mask, mask, cv::CMP_GE);
@@ -119,8 +124,7 @@ void IsolateMaxima(const cv::Mat &src, cv::Mat &mask) {
 }
 
 // Returns pixel coordinate (row, col) of maxima in single-channel image
-std::vector<Eigen::Vector2i> FindPeaks(const cv::Mat &image,
-                                       const float threshold) {
+std::vector<Eigen::Vector2i> FindPeaks(const cv::Mat& image) {
   // Extract centers of local maxima
   cv::Mat mask;
   std::vector<cv::Point> maxima;
@@ -130,7 +134,7 @@ std::vector<Eigen::Vector2i> FindPeaks(const cv::Mat &image,
   // Find maxima
   std::vector<Eigen::Vector2i> peaks;
   for (const auto &m : maxima) {
-    if (image.at<float>(m.y, m.x) > threshold) {
+    if (image.at<float>(m.y, m.x) > kBlurredPeakThreshold) {
       peaks.push_back(Eigen::Vector2i(m.x, m.y));
     }
   }
@@ -140,13 +144,13 @@ std::vector<Eigen::Vector2i> FindPeaks(const cv::Mat &image,
 
 // Returns 3x9 matrix of the 3d coordinates of cuboid corners and center
 Eigen::Matrix<double, 3, kNumVertexChannel>
-CuboidVertices(const std::array<double, 3> &ext) {
+CuboidVertices(const std::array<double, 3>& ext) {
   // X axis points to the right
-  const double right = ext.at(0) * 0.5;
-  const double left = -ext.at(0) * 0.5;
+  const double right = -ext.at(0) * 0.5;
+  const double left = ext.at(0) * 0.5;
   // Y axis points downward
-  const double bottom = ext.at(1) * 0.5;
-  const double top = -ext.at(1) * 0.5;
+  const double bottom = -ext.at(1) * 0.5;
+  const double top = ext.at(1) * 0.5;
   // Z axis points forward (away from camera)
   const double front = ext.at(2) * 0.5;
   const double rear = -ext.at(2) * 0.5;
@@ -160,7 +164,8 @@ CuboidVertices(const std::array<double, 3> &ext) {
 }
 
 std::vector<DopeObjectKeypoints>
-FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
+FindObjects(const std::array<cv::Mat, kInputMapsChannels>& maps, const double map_peak_threshold,
+            const double affinity_map_angle_threshold) {
   using Vector2f = Eigen::Vector2f;
   using Vector2i = Eigen::Vector2i;
 
@@ -178,18 +183,18 @@ FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
                      kGaussianSigma, cv::BORDER_REFLECT);
 
     // Find the maxima of the tensor values in this channel
-    std::vector<Vector2i> peaks = FindPeaks(blurred, kMapPeakThreshhold);
+    std::vector<Vector2i> peaks = FindPeaks(blurred);
     for (size_t pp = 0; pp < peaks.size(); ++pp) {
       const auto peak = peaks[pp];
 
-      // Compute the weighted average for localizing the peak, using a 5x5
+      // Compute the weighted average for localizing the peak, using an 11x11
       // window
       Vector2f peak_sum(0, 0);
       float weight_sum = 0.0f;
-      for (int ii = -2; ii <= 2; ++ii) {
-        for (int jj = -2; jj <= 2; ++jj) {
-          const int row = peak[0] + ii;
-          const int col = peak[1] + jj;
+      for (int ii = -5; ii <= 5; ++ii) {
+        for (int jj = -5; jj <= 5; ++jj) {
+          const int row = peak[1] + ii;
+          const int col = peak[0] + jj;
 
           if (col < 0 || col >= image.size[1] || row < 0 ||
               row >= image.size[0]) {
@@ -198,12 +203,12 @@ FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
 
           const float weight = image.at<float>(row, col);
           weight_sum += weight;
-          peak_sum[0] += row * weight;
-          peak_sum[1] += col * weight;
+          peak_sum[1] += row * weight;
+          peak_sum[0] += col * weight;
         }
       }
 
-      if (image.at<float>(peak[1], peak[0]) >= kMapPeakThreshhold) {
+      if (image.at<float>(peak[1], peak[0]) >= map_peak_threshold) {
         channel_peaks[chan].push_back(static_cast<int>(all_peaks.size()));
         if (std::fabs(weight_sum) < kMinimumWeightSum) {
           all_peaks.push_back({peak[0] + kOffsetDueToUpsampling,
@@ -227,15 +232,15 @@ FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
   // Use 16 affinity field tensors (2 for each corner to centroid) to identify
   // corner-centroid associated for each corner peak
   for (size_t chan = 0; chan < kNumVertexChannel - 1; ++chan) {
-    const std::vector<int> &peaks = channel_peaks[chan];
+    const std::vector<int>& peaks = channel_peaks[chan];
     for (size_t pp = 0; pp < peaks.size(); ++pp) {
       int best_idx = kInvalidId;
       float best_distance = kInvalidDist;
       float best_angle = kInvalidDist;
 
       for (size_t jj = 0; jj < objects.size(); ++jj) {
-        const Vector2f &center = all_peaks[objects[jj].center];
-        const Vector2f &point = all_peaks[peaks[pp]];
+        const Vector2f& center = all_peaks[objects[jj].center];
+        const Vector2f& point = all_peaks[peaks[pp]];
         const Vector2i point_int(static_cast<int>(point[0]),
                                  static_cast<int>(point[1]));
 
@@ -250,7 +255,7 @@ FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
         const float angle = (v_center - v_aff).norm();
         const float dist = (point - center).norm();
 
-        if (angle < kAffinityMapAngleThreshhold && dist < best_distance) {
+        if (angle < affinity_map_angle_threshold && dist < best_distance) {
           best_idx = jj;
           best_distance = dist;
           best_angle = angle;
@@ -262,7 +267,7 @@ FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
       }
 
       if (objects[best_idx].corners[chan] == kInvalidId ||
-          (best_angle < kAffinityMapAngleThreshhold &&
+          (best_angle < affinity_map_angle_threshold &&
            best_distance < objects[best_idx].best_distances[chan])) {
         objects[best_idx].corners[chan] = peaks[pp];
         objects[best_idx].best_distances[chan] = best_distance;
@@ -303,10 +308,11 @@ FindObjects(const std::array<cv::Mat, kInputMapsChannels> &maps) {
 }
 
 gxf::Expected<std::array<double, kExpectedPoseAsTensorSize>>
-ExtractPose(const DopeObjectKeypoints &object,
-            const Eigen::Matrix<double, 3, kNumVertexChannel> &cuboid_3d_points,
-            const cv::Mat &camera_matrix) {
-  const auto &valid_points = object.first;
+ExtractPose(const DopeObjectKeypoints& object,
+            const Eigen::Matrix<double, 3, kNumVertexChannel>& cuboid_3d_points,
+            const cv::Mat& camera_matrix, const double rotation_y_axis,
+            const double rotation_x_axis, const double rotation_z_axis) {
+  const auto& valid_points = object.first;
   const size_t num_valid_points = valid_points.size();
   Eigen::Matrix3Xd keypoints_3d(3, num_valid_points);
   for (size_t j = 0; j < num_valid_points; ++j) {
@@ -315,24 +321,40 @@ ExtractPose(const DopeObjectKeypoints &object,
 
   Pose3d pose;
   cv::Mat rvec, tvec;
-  cv::Mat dist_coeffs = cv::Mat::zeros(1, 4, CV_64FC1); // no distortion
+  cv::Mat dist_coeffs = cv::Mat::zeros(1, 4, CV_64FC1);  // no distortion
 
   cv::Mat cv_keypoints_3d;
   cv::eigen2cv(keypoints_3d, cv_keypoints_3d);
   cv::Mat cv_keypoints_2d;
   cv::eigen2cv(object.second, cv_keypoints_2d);
   if (!cv::solvePnP(cv_keypoints_3d.t(), cv_keypoints_2d.t(), camera_matrix,
-                    dist_coeffs, rvec, tvec)) {
+                    dist_coeffs, rvec, tvec, false, cv::SOLVEPNP_EPNP)) {
     GXF_LOG_ERROR("cv::solvePnP failed");
     return nvidia::gxf::Unexpected{GXF_FAILURE};
   }
   cv::cv2eigen(tvec, pose.translation);
 
   cv::Mat R;
-  cv::Rodrigues(rvec, R); // R is 3x3
+  cv::Rodrigues(rvec, R);  // R is 3x3
   Eigen::Matrix3d e_mat;
   cv::cv2eigen(R, e_mat);
-  pose.rotation = Eigen::Quaterniond(e_mat);
+  Eigen::AngleAxisd rotation_y(rotation_y_axis, Eigen::Vector3d::UnitY());
+  Eigen::AngleAxisd rotation_x(rotation_x_axis, Eigen::Vector3d::UnitX());
+  Eigen::AngleAxisd rotation_z(rotation_z_axis, Eigen::Vector3d::UnitZ());
+
+  // Convert to rotation matrices
+  Eigen::Matrix3d rotation_y_matrix = rotation_y.toRotationMatrix();
+  Eigen::Matrix3d rotation_x_matrix = rotation_x.toRotationMatrix();
+  Eigen::Matrix3d rotation_z_matrix = rotation_z.toRotationMatrix();
+
+  // Compose the rotations
+  Eigen::Matrix3d composed_rotation = rotation_z_matrix * rotation_y_matrix * rotation_x_matrix;
+
+  // Apply the composed rotation to the original matrix
+  Eigen::Matrix3d rotated_matrix = e_mat * composed_rotation;
+
+  pose.rotation = Eigen::Quaterniond(rotated_matrix);
+
 
   // If the Z coordinate is negative, the pose is placing the object behind
   // the camera (which is incorrect), so we flip it
@@ -340,7 +362,6 @@ ExtractPose(const DopeObjectKeypoints &object,
     pose = pose.inverse();
   }
 
-  constexpr double kCentimeterToMeter = 100.0;
   // Return pose data as array
   return std::array<double, kExpectedPoseAsTensorSize>{
       pose.translation[0] / kCentimeterToMeter,
@@ -352,45 +373,58 @@ ExtractPose(const DopeObjectKeypoints &object,
       pose.rotation.w()};
 }
 
-gxf::Expected<void> AddInputTimestampToOutput(gxf::Entity &output,
-                                              gxf::Entity input) {
-  std::string timestamp_name{"timestamp"};
-  auto maybe_timestamp = input.get<gxf::Timestamp>(timestamp_name.c_str());
+gxf::Expected<void> AddInputTimestampToOutput(gxf::Entity& output, gxf::Entity input) {
+  std::string named_timestamp{"timestamp"};
+  std::string unnamed_timestamp{""};
+  auto maybe_input_timestamp = input.get<gxf::Timestamp>(named_timestamp.c_str());
 
-  // Default to unnamed
-  if (!maybe_timestamp) {
-    timestamp_name = std::string{""};
-    maybe_timestamp = input.get<gxf::Timestamp>(timestamp_name.c_str());
+  // Try to get a named timestamp from the input entity
+  if (!maybe_input_timestamp) {
+    maybe_input_timestamp = input.get<gxf::Timestamp>(unnamed_timestamp.c_str());
   }
-
-  if (!maybe_timestamp) {
+  // If there is no named timestamp, try to get a unnamed timestamp from the input entity
+  if (!maybe_input_timestamp) {
     GXF_LOG_ERROR("Failed to get input timestamp!");
-    return gxf::ForwardError(maybe_timestamp);
+    return gxf::ForwardError(maybe_input_timestamp);
   }
 
-  auto maybe_out_timestamp = output.add<gxf::Timestamp>(timestamp_name.c_str());
-  if (!maybe_out_timestamp) {
-    GXF_LOG_ERROR("Failed to add timestamp to output message!");
-    return gxf::ForwardError(maybe_out_timestamp);
+  // Try to get a named timestamp from the output entity
+  auto maybe_output_timestamp = output.get<gxf::Timestamp>(named_timestamp.c_str());
+  // If there is no named timestamp, try to get a unnamed timestamp from the output entity
+  if (!maybe_output_timestamp) {
+    maybe_output_timestamp = output.get<gxf::Timestamp>(unnamed_timestamp.c_str());
   }
 
-  *maybe_out_timestamp.value() = *maybe_timestamp.value();
+  // If there is no unnamed timestamp also, then add a named timestamp to the output entity
+  if (!maybe_output_timestamp) {
+    maybe_output_timestamp = output.add<gxf::Timestamp>(named_timestamp.c_str());
+    if (!maybe_output_timestamp) {
+      GXF_LOG_ERROR("Failed to add timestamp to output message!");
+      return gxf::ForwardError(maybe_output_timestamp);
+    }
+  }
+
+  *maybe_output_timestamp.value() = *maybe_input_timestamp.value();
   return gxf::Success;
 }
 
-} // namespace
+}  // namespace
 
 gxf_result_t
-DopeDecoder::registerInterface(gxf::Registrar *registrar) noexcept {
+DopeDecoder::registerInterface(gxf::Registrar* registrar) noexcept {
   gxf::Expected<void> result;
 
   result &= registrar->parameter(tensorlist_receiver_, "tensorlist_receiver",
                                  "Tensorlist Input",
                                  "The detections as a tensorlist");
 
-  result &= registrar->parameter(posearray_transmitter_,
-                                 "posearray_transmitter", "PoseArray output",
-                                 "The ouput poses as a pose array");
+  result &= registrar->parameter(camera_model_input_, "camera_model_input",
+                                  "Camera Model Input",
+                                  "The Camera intrinsics as a Nitros Camera Info type");
+
+  result &= registrar->parameter(detection3darray_transmitter_,
+                                 "detection3darray_transmitter", "Detection3DArray output",
+                                 "The ouput poses as a Detection3D array");
 
   result &= registrar->parameter(allocator_, "allocator", "Allocator",
                                  "Output Allocator");
@@ -400,12 +434,28 @@ DopeDecoder::registerInterface(gxf::Registrar *registrar) noexcept {
       "The dimensions of the object whose pose is being estimated");
 
   result &= registrar->parameter(
-      camera_matrix_param_, "camera_matrix",
-      "The parameters of the camera used to capture the input images");
-
-  result &= registrar->parameter(
       object_name_, "object_name",
       "The class name of the object whose pose is being estimated");
+
+  result &= registrar->parameter(
+      map_peak_threshold_, "map_peak_threshold",
+      "The minimum value of a peak in a belief map");
+
+  result &= registrar->parameter(
+      affinity_map_angle_threshold_, "affinity_map_angle_threshold",
+      "The maximum angle threshold for affinity mapping of corners to centroid");
+
+  result &= registrar->parameter(
+      rotation_y_axis_, "rotation_y_axis", "rotation_y_axis",
+      "Rotate Dope pose by N degrees along y axis", 0.0);
+
+  result &= registrar->parameter(
+      rotation_x_axis_, "rotation_x_axis", "rotation_x_axis",
+      "Rotate Dope pose by N degrees along x axis", 0.0);
+
+  result &= registrar->parameter(
+      rotation_z_axis_, "rotation_z_axis", "rotation_z_axis",
+      "Rotate Dope pose by N degrees along z axis", 0.0);
 
   return gxf::ToResultCode(result);
 }
@@ -414,23 +464,28 @@ gxf_result_t DopeDecoder::start() noexcept {
   // Extract 3D coordinates of bounding cuboid + centroid from object dimensions
   auto dims = object_dimensions_param_.get();
   if (dims.size() != 3) {
-    GXF_LOG_ERROR("Expected object dimensions vector to be length 3 but got %lu",
-                  dims.size());
     return GXF_FAILURE;
   }
   cuboid_3d_points_ = CuboidVertices({dims.at(0), dims.at(1), dims.at(2)});
 
-  // Load camera matrix into cv::Mat
-  if (camera_matrix_param_.get().size() != 9) {
-    GXF_LOG_ERROR("Expected camera matrix vector to be length 9 but got %lu",
-                  camera_matrix_param_.get().size());
-    return GXF_FAILURE;
-  }
   camera_matrix_ = cv::Mat::zeros(3, 3, CV_64FC1);
-  std::memcpy(camera_matrix_.data, camera_matrix_param_.get().data(),
-              camera_matrix_param_.get().size() * sizeof(double));
 
   return GXF_SUCCESS;
+}
+
+gxf::Expected<void> DopeDecoder::updateCameraProperties(
+    gxf::Handle<gxf::CameraModel> camera_model) {
+  if (!camera_model) {
+    return gxf::Unexpected{GXF_FAILURE};
+  }
+
+  camera_matrix_.at<double>(0, 0) = camera_model->focal_length.x;
+  camera_matrix_.at<double>(0, 2)= camera_model->principal_point.x;
+  camera_matrix_.at<double>(1, 1) = camera_model->focal_length.y;
+  camera_matrix_.at<double>(1, 2) = camera_model->principal_point.y;
+  camera_matrix_.at<double>(2, 2) = 1.0;
+
+  return gxf::Success;
 }
 
 gxf_result_t DopeDecoder::tick() noexcept {
@@ -448,22 +503,30 @@ gxf_result_t DopeDecoder::tick() noexcept {
 
   // Ensure belief maps match expected shape in first two dimensions
   if (belief_maps->shape().dimension(0) != kNumTensors ||
-    belief_maps->shape().dimension(1) != kInputMapsChannels)
-  {
+    belief_maps->shape().dimension(1) != kInputMapsChannels) {
     GXF_LOG_ERROR(
       "Belief maps had unexpected shape in first two dimensions: {%d, %d, %d, %d}",
       belief_maps->shape().dimension(0), belief_maps->shape().dimension(1),
       belief_maps->shape().dimension(2), belief_maps->shape().dimension(3));
     return GXF_FAILURE;
   }
-
-  // Allocate output message
-  auto maybe_posearray_message = gxf::Entity::New(context());
-  if (!maybe_posearray_message) {
-    GXF_LOG_ERROR("Failed to allocate PoseArray Message");
-    return gxf::ToResultCode(maybe_posearray_message);
+  auto maybe_camera_model_entity = camera_model_input_->receive();
+  if (!maybe_camera_model_entity) {
+    GXF_LOG_ERROR("Failed to receive input camera model entity!");
+    return gxf::ToResultCode(maybe_camera_model_entity);
   }
-  auto posearray_message = maybe_posearray_message.value();
+
+  auto maybe_camera_model = maybe_camera_model_entity.value().get<gxf::CameraModel>("intrinsics");
+  if (!maybe_camera_model) {
+    GXF_LOG_ERROR("Failed to receive input camera model!");
+    return gxf::ToResultCode(maybe_camera_model);
+  }
+
+  auto maybe_updated_properties = updateCameraProperties(maybe_camera_model.value());
+  if (!maybe_updated_properties) {
+    GXF_LOG_ERROR("Failed to update camera properties!");
+    return gxf::ToResultCode(maybe_updated_properties);
+  }
 
   // Copy tensor data over to a more portable form
   std::array<cv::Mat, kInputMapsChannels> maps;
@@ -487,67 +550,63 @@ gxf_result_t DopeDecoder::tick() noexcept {
   }
 
   // Analyze the belief map to find vertex locations in image space
-  const std::vector<DopeObjectKeypoints> dope_objects = FindObjects(maps);
-  
-  // Add timestamp to output msg
-  auto maybe_added_timestamp = AddInputTimestampToOutput(
-      posearray_message, maybe_beliefmaps_message.value());
+  const std::vector<DopeObjectKeypoints> dope_objects =
+      FindObjects(maps, map_peak_threshold_, affinity_map_angle_threshold_);
+
+  // Create Detection3DList Message
+  auto maybe_detection3_d_list = nvidia::isaac::CreateDetection3DListMessage(
+      context(), dope_objects.size());
+  if (!maybe_detection3_d_list) {
+    GXF_LOG_ERROR("[DopeDecoder] Failed to create detection3d list");
+    return gxf::ToResultCode(maybe_detection3_d_list);
+  }
+  auto detection3_d_list = maybe_detection3_d_list.value();
+
+  auto maybe_added_timestamp =
+      AddInputTimestampToOutput(maybe_detection3_d_list->entity, maybe_beliefmaps_message.value());
   if (!maybe_added_timestamp) {
-    return gxf::ToResultCode(maybe_added_timestamp);
+    GXF_LOG_ERROR("[DopeDecoder] Failed to add timestamp");
   }
 
   if (dope_objects.empty()) {
     GXF_LOG_INFO("No objects detected.");
-
     return gxf::ToResultCode(
-        posearray_transmitter_->publish(std::move(posearray_message)));
+        detection3darray_transmitter_->publish(std::move(detection3_d_list.entity)));
   }
 
   // Run Perspective-N-Point on the detected objects to find the 6-DoF pose of
   // the bounding cuboid
-  for (const DopeObjectKeypoints &object : dope_objects) {
-    // Allocate output tensor for this pose
-    auto maybe_pose_tensor = posearray_message.add<gxf::Tensor>();
-    if (!maybe_pose_tensor) {
-      GXF_LOG_ERROR("Failed to allocate Pose Tensor");
-      return gxf::ToResultCode(maybe_pose_tensor);
-    }
-    auto pose_tensor = maybe_pose_tensor.value();
-
-    // Initializing GXF tensor
-    auto result = pose_tensor->reshape<double>(
-        nvidia::gxf::Shape{kExpectedPoseAsTensorSize},
-        nvidia::gxf::MemoryStorageType::kDevice, allocator_);
-    if (!result) {
-      GXF_LOG_ERROR("Failed to reshape Pose Tensor to (%d,)",
-                    kExpectedPoseAsTensorSize);
-      return gxf::ToResultCode(result);
-    }
-
-    auto maybe_pose = ExtractPose(object, cuboid_3d_points_, camera_matrix_);
+  for (size_t i = 0; i < dope_objects.size(); i++) {
+    const DopeObjectKeypoints& object = dope_objects[i];
+    auto maybe_pose = ExtractPose(object, cuboid_3d_points_, camera_matrix_,
+                                  rotation_y_axis_.get(), rotation_x_axis_.get(),
+                                  rotation_z_axis_.get());
     if (!maybe_pose) {
       GXF_LOG_ERROR("Failed to extract pose from object");
       return gxf::ToResultCode(maybe_pose);
     }
     auto pose = maybe_pose.value();
 
-    // Copy pose data into pose tensor
-    const cudaMemcpyKind operation = cudaMemcpyHostToDevice;
-    const cudaError_t cuda_error = cudaMemcpy(
-        pose_tensor->pointer(), pose.data(), pose_tensor->size(), operation);
+    // Rotation: w = pose[6], x = pose[3], y = pose[4], z = pose[5]
+    nvidia::isaac::Pose3d pose3d{
+      nvidia::isaac::SO3d::FromQuaternion({pose[6], pose[3], pose[4], pose[5]}),  // rotation
+      nvidia::isaac::Vector3d(pose[0], pose[1], pose[2])  // translation
+    };
 
-    if (cuda_error != cudaSuccess) {
-      GXF_LOG_ERROR("Failed to copy data to pose tensor: %s (%s)",
-                    cudaGetErrorName(cuda_error),
-                    cudaGetErrorString(cuda_error));
-      return GXF_FAILURE;
-    }
+    auto bbox_dims = object_dimensions_param_.get();
+    auto bbox_x = bbox_dims.at(0) / kCentimeterToMeter;
+    auto bbox_y = bbox_dims.at(1) / kCentimeterToMeter;
+    auto bbox_z = bbox_dims.at(2) / kCentimeterToMeter;
+
+    **detection3_d_list.poses[i] = pose3d;
+    **detection3_d_list.bbox_sizes[i] = nvidia::isaac::Vector3f(bbox_x, bbox_y, bbox_z);
+    **detection3_d_list.hypothesis[i] = nvidia::isaac::ObjectHypothesis{
+        std::vector<float>{0.0}, std::vector<std::string>{object_name_}};
   }
-
   return gxf::ToResultCode(
-      posearray_transmitter_->publish(std::move(posearray_message)));
+      detection3darray_transmitter_->publish(std::move(detection3_d_list.entity)));
 }
 
-} // namespace dope
-} // namespace isaac_ros
-} // namespace nvidia
+}  // namespace dope
+}  // namespace isaac_ros
+}  // namespace nvidia

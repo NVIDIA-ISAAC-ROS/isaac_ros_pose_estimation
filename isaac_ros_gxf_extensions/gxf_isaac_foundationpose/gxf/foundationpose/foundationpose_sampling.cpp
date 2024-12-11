@@ -153,6 +153,46 @@ float RotationGeodesticDistance(const Eigen::Matrix3f& R1, const Eigen::Matrix3f
   return std::acos(cos);
 }
 
+std::vector<Eigen::Matrix4f> GenerateSymmetricPoses(const std::vector<std::string>& symmetry_planes) {    
+  float theta = 180.0 / 180.0 * M_PI;
+  std::vector<float> x_angles = {0.0};
+  std::vector<float> y_angles = {0.0};
+  std::vector<float> z_angles = {0.0};
+  std::vector<Eigen::Matrix4f> symmetry_poses;
+
+  for (int i = 0; i < symmetry_planes.size(); ++i) {
+    if (symmetry_planes[i] == "x"){
+      x_angles.push_back(theta);
+    } else if (symmetry_planes[i] == "y") {
+      y_angles.push_back(theta);
+    } else if (symmetry_planes[i] == "z") {
+      z_angles.push_back(theta);
+    } else {
+    GXF_LOG_ERROR("[FoundationposeSampling] the input symmetry plane %s is invalid, ignore.", symmetry_planes[i]);
+    continue;
+    }
+  }
+
+  // Compute rotation matrix for each angle
+  for (int i = 0; i < x_angles.size(); ++i) {
+      auto rot_x = Eigen::AngleAxisf(x_angles[i], Eigen::Vector3f::UnitX());
+    for (int j = 0; j < y_angles.size(); ++j) {
+      auto rot_y = Eigen::AngleAxisf(y_angles[j], Eigen::Vector3f::UnitY());
+      for (int k = 0; k < z_angles.size(); ++k) {
+        auto rot_z = Eigen::AngleAxisf(z_angles[k], Eigen::Vector3f::UnitZ());
+        auto rotaion_matrix_x = rot_x.toRotationMatrix();
+        auto rotaion_matrix_y = rot_y.toRotationMatrix();
+        auto rotaion_matrix_z = rot_z.toRotationMatrix();
+        auto rotation = rotaion_matrix_z * rotaion_matrix_y * rotaion_matrix_x;
+        Eigen::Matrix4f euler_matrix = Eigen::Matrix4f::Identity();
+        euler_matrix.block<3, 3>(0, 0) = rotation;
+        symmetry_poses.push_back(euler_matrix);
+      }
+    }
+  }
+  return std::move(symmetry_poses);
+}
+
 std::vector<Eigen::Matrix4f> ClusterPoses(
     float angle_diff, float dist_diff, std::vector<Eigen::Matrix4f>& poses_in,
     std::vector<Eigen::Matrix4f>& symmetry_tfs) {
@@ -216,7 +256,7 @@ std::vector<Eigen::Matrix4f> SampleViewsIcosphere(unsigned int n_views) {
   return std::move(cam_in_obs);
 }
 
-std::vector<Eigen::Matrix4f> MakeRotationGrid(unsigned int n_views = 40, int inplane_step = 60) {
+std::vector<Eigen::Matrix4f> MakeRotationGrid(const std::vector<std::string>& symmetry_planes, unsigned int n_views = 40, int inplane_step = 60) {
   auto cam_in_obs = SampleViewsIcosphere(n_views);
 
   std::vector<Eigen::Matrix4f> rot_grid;
@@ -234,10 +274,11 @@ std::vector<Eigen::Matrix4f> MakeRotationGrid(unsigned int n_views = 40, int inp
     }
   }
 
-  std::vector<Eigen::Matrix4f> symmetry_tfs = std::vector<Eigen::Matrix4f>();
+  std::vector<Eigen::Matrix4f> symmetry_tfs = GenerateSymmetricPoses(symmetry_planes);
   symmetry_tfs.push_back(Eigen::Matrix4f::Identity());
-  ClusterPoses(30.0, 99999.0, rot_grid, symmetry_tfs);
-  return std::move(rot_grid);
+  auto clustered_poses = ClusterPoses(30.0, 99999.0, rot_grid, symmetry_tfs);
+  GXF_LOG_DEBUG("[FoundationposeSampling] %lu poses left after clustering", clustered_poses.size());
+  return std::move(clustered_poses);
 }
 
 bool GuessTranslation(
@@ -254,7 +295,7 @@ bool GuessTranslation(
     }
   }
   if (us.empty()) {
-    GXF_LOG_ERROR("[FoundationposeSampling] Mask is all zero.");
+    GXF_LOG_INFO("[FoundationposeSampling] Mask is all zero.");
     return false;
   }
 
@@ -336,6 +377,10 @@ gxf_result_t FoundationposeSampling::registerInterface(gxf::Registrar* registrar
       min_depth_, "min_depth", "Minimum Depth",
       "Minimum depth value to consider for estimating object center in image space.",
       0.1f);
+  
+  result &= registrar->parameter(
+    symmetry_planes_, "symmetry_planes", "Symmetry Planes",
+    "Symmetry planes, select one or more from [x, y, z]. ", std::vector<std::string>{});
 
   return gxf::ToResultCode(result);
 }
@@ -445,7 +490,7 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
   }
 
   // Generate Pose Hypothesis
-  auto ob_in_cams = MakeRotationGrid();
+  auto ob_in_cams = MakeRotationGrid(symmetry_planes_.get());
   if (ob_in_cams.size() == 0 || ob_in_cams.size() > max_hypothesis_) {
     GXF_LOG_ERROR("[FoundationposeSampling] The size of rotation grid is not valid.");
     return GXF_FAILURE;
@@ -480,7 +525,7 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
   Eigen::Vector3f center;
   auto success = GuessTranslation(bilateral_filter_depth_host, mask, K, min_depth_, center);
   if (!success) {
-    GXF_LOG_ERROR("[FoundationposeSampling] Failed to guess translation. Not processing this image");
+    GXF_LOG_INFO("[FoundationposeSampling] Failed to guess translation. Not processing this image");
     return GXF_SUCCESS;
   }
   for (auto& m : ob_in_cams) {

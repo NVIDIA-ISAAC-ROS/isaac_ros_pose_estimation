@@ -20,27 +20,32 @@ SPDX-License-Identifier: Apache-2.0
 
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>gxf_isaac_dope</name>
+  <name>isaac_ros_pose_proc</name>
   <version>3.2.0</version>
-  <description>GXF extension containing CenterPose pose estimation related components.</description>
+  <description>Pose filtering and processing</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>Apache-2.0</license>
   <url type="website">https://developer.nvidia.com/isaac-ros-gems/</url>
-  <author>CY Chen</author>
+  <author>Toya Takahashi</author>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>isaac_ros_common</depend>
-  <depend>isaac_ros_gxf</depend>
-  <depend>isaac_ros_nitros_detection3_d_array_type</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>vision_msgs</depend>
 
-  <build_depend>gxf_isaac_gems</build_depend>
+  <depend>isaac_ros_common</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>isaac_ros_test</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
   </export>
 </package>
+

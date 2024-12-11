@@ -36,9 +36,7 @@ RT_DETR_MODEL_NUM_CHANNELS = 3
 
 VISUALIZATION_DOWNSCALING_FACTOR = 10
 
-REFINE_MODEL_PATH = '/tmp/refine_model.onnx'
 REFINE_ENGINE_PATH = '/tmp/refine_trt_engine.plan'
-SCORE_MODEL_PATH = '/tmp/score_model.onnx'
 SCORE_ENGINE_PATH = '/tmp/score_trt_engine.plan'
 
 
@@ -53,12 +51,9 @@ class IsaacROSFoundationPoseLaunchFragment(IsaacROSLaunchFragment):
         # FoundationPose parameters
         mesh_file_path = LaunchConfiguration('mesh_file_path')
         texture_path = LaunchConfiguration('texture_path')
-        refine_model_file_path = LaunchConfiguration('refine_model_file_path')
         refine_engine_file_path = LaunchConfiguration('refine_engine_file_path')
-        score_model_file_path = LaunchConfiguration('score_model_file_path')
         score_engine_file_path = LaunchConfiguration('score_engine_file_path')
         # RT-DETR parameters
-        rt_detr_model_file_path = LaunchConfiguration('rt_detr_model_file_path')
         rt_detr_engine_file_path = LaunchConfiguration('rt_detr_engine_file_path')
         input_width = interface_specs['camera_resolution']['width']
         input_height = interface_specs['camera_resolution']['height']
@@ -188,7 +183,6 @@ class IsaacROSFoundationPoseLaunchFragment(IsaacROSLaunchFragment):
                 package='isaac_ros_tensor_rt',
                 plugin='nvidia::isaac_ros::dnn_inference::TensorRTNode',
                 parameters=[{
-                    'model_file_path': rt_detr_model_file_path,
                     'engine_file_path': rt_detr_engine_file_path,
                     'output_binding_names': ['labels', 'boxes', 'scores'],
                     'output_tensor_names': ['labels', 'boxes', 'scores'],
@@ -206,15 +200,22 @@ class IsaacROSFoundationPoseLaunchFragment(IsaacROSLaunchFragment):
             # Create a binary segmentation mask from a Detection2DArray published by RT-DETR.
             # The segmentation mask is of size
             # int(IMAGE_WIDTH/input_to_RT_DETR_ratio) x int(IMAGE_HEIGHT/input_to_RT_DETR_ratio)
+            'detection2_d_array_filter_node': ComposableNode(
+                name='detection2_d_array_filter',
+                package='isaac_ros_foundationpose',
+                plugin='nvidia::isaac_ros::foundationpose::Detection2DArrayFilter',
+                remappings=[('detection2_d_array', 'detections_output')]
+            ),
             'detection2_d_to_mask_node': ComposableNode(
                 name='detection2_d_to_mask',
                 package='isaac_ros_foundationpose',
                 plugin='nvidia::isaac_ros::foundationpose::Detection2DToMask',
                 parameters=[{
                     'mask_width': int(input_width/input_to_RT_DETR_ratio),
-                    'mask_height': int(input_height/input_to_RT_DETR_ratio)}],
-                remappings=[('detection2_d_array', 'detections_output'),
-                            ('segmentation', 'rt_detr_segmentation')]),
+                    'mask_height': int(input_height/input_to_RT_DETR_ratio)
+                }],
+                remappings=[('segmentation', 'rt_detr_segmentation')]
+            ),
 
             # Resize segmentation mask to ESS model image size so it can be used by FoundationPose
             # FoundationPose requires depth, rgb image and segmentation mask to be of the same size
@@ -272,14 +273,12 @@ class IsaacROSFoundationPoseLaunchFragment(IsaacROSLaunchFragment):
                     'mesh_file_path': mesh_file_path,
                     'texture_path': texture_path,
 
-                    'refine_model_file_path': refine_model_file_path,
                     'refine_engine_file_path': refine_engine_file_path,
                     'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
                     'refine_input_binding_names': ['input1', 'input2'],
                     'refine_output_tensor_names': ['output_tensor1', 'output_tensor2'],
                     'refine_output_binding_names': ['output1', 'output2'],
 
-                    'score_model_file_path': score_model_file_path,
                     'score_engine_file_path': score_engine_file_path,
                     'score_input_tensor_names': ['input_tensor1', 'input_tensor2'],
                     'score_input_binding_names': ['input1', 'input2'],
@@ -320,20 +319,10 @@ class IsaacROSFoundationPoseLaunchFragment(IsaacROSLaunchFragment):
                 default_value='',
                 description='The absolute file path to the texture map'),
 
-            'refine_model_file_path': DeclareLaunchArgument(
-                'refine_model_file_path',
-                default_value=REFINE_MODEL_PATH,
-                description='The absolute file path to the refine model'),
-
             'refine_engine_file_path': DeclareLaunchArgument(
                 'refine_engine_file_path',
                 default_value=REFINE_ENGINE_PATH,
                 description='The absolute file path to the refine trt engine'),
-
-            'score_model_file_path': DeclareLaunchArgument(
-                'score_model_file_path',
-                default_value=SCORE_MODEL_PATH,
-                description='The absolute file path to the score model'),
 
             'score_engine_file_path': DeclareLaunchArgument(
                 'score_engine_file_path',

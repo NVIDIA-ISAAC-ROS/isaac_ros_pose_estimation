@@ -160,7 +160,7 @@ def generate_launch_description():
         parameters=[{'module_id': 5,
                      'input_qos': 'SENSOR_DATA',
                      'output_qos': 'SENSOR_DATA',
-                     'enable_statistics': True,
+                     'enable_diagnostics': True,
                      'topics_list': ['left/image_raw'],
                      'expected_fps_list': [30.0],
                      'jitter_tolerance_us': 30000}],
@@ -346,15 +346,22 @@ def generate_launch_description():
     # Create a binary segmentation mask from a Detection2DArray published by RT-DETR.
     # The segmentation mask is of size int(HAWK_IMAGE_WIDTH/HAWK_TO_RT_DETR_RATIO) x
     # int(HAWK_IMAGE_HEIGHT/HAWK_TO_RT_DETR_RATIO)
+    detection2_d_array_filter_node = ComposableNode(
+        name='detection2_d_array_filter',
+        package='isaac_ros_foundationpose',
+        plugin='nvidia::isaac_ros::foundationpose::Detection2DArrayFilter',
+        remappings=[('detection2_d_array', 'detections_output')]
+    )
     detection2_d_to_mask_node = ComposableNode(
         name='detection2_d_to_mask',
         package='isaac_ros_foundationpose',
         plugin='nvidia::isaac_ros::foundationpose::Detection2DToMask',
         parameters=[{
             'mask_width': int(HAWK_IMAGE_WIDTH/HAWK_TO_RT_DETR_RATIO),
-            'mask_height': int(HAWK_IMAGE_HEIGHT/HAWK_TO_RT_DETR_RATIO)}],
-        remappings=[('detection2_d_array', 'detections_output'),
-                    ('segmentation', 'rt_detr_segmentation')])
+            'mask_height': int(HAWK_IMAGE_HEIGHT/HAWK_TO_RT_DETR_RATIO)
+        }],
+        remappings=[('segmentation', 'rt_detr_segmentation')]
+    )
 
     # Resize segmentation mask to ESS model image size so it can be used by FoundationPose
     # FoundationPose requires depth, rgb image and segmentation mask to be of the same size
@@ -508,6 +515,7 @@ def generate_launch_description():
             rtdetr_preprocessor_node,
             tensor_rt_node,
             rtdetr_decoder_node,
+            detection2_d_array_filter_node,
             detection2_d_to_mask_node,
             resize_mask_node,
             resize_left_ess_size,

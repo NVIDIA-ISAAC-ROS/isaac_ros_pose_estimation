@@ -42,12 +42,11 @@ ISAAC_ROS_MODELS_PATH = os.path.join(ISAAC_ROS_ASSETS_PATH, 'models')
 ISAAC_ROS_FP_MESHES_PATH = os.path.join(ISAAC_ROS_ASSETS_PATH,
                                         'isaac_ros_foundationpose')
 STEREO_DISPARITY_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH,
-                                            'dnn_stereo_disparity', 'dnn_stereo_disparity_v4.0.0')
+                                            'dnn_stereo_disparity',
+                                            'dnn_stereo_disparity_v4.1.0_onnx')
 SYNTHETICA_DETR_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'synthetica_detr')
 FOUDNATIONPOSE_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'foundationpose')
 REFINE_ENGINE_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'refine_trt_engine.plan')
-REFINE_MODEL_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'refine_model.onnx')
-SCORE_MODEL_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'score_model.onnx')
 
 SCORE_ENGINE_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'score_trt_engine.plan')
 ESS_ENGINE_PATH = os.path.join(STEREO_DISPARITY_MODELS_PATH, 'light_ess.engine')
@@ -86,16 +85,6 @@ def generate_launch_description():
             description='The absolute file path to the score trt engine'),
 
         DeclareLaunchArgument(
-            'refine_model_file_path',
-            default_value=REFINE_MODEL_PATH,
-            description='The absolute file path to the refine trt engine'),
-
-        DeclareLaunchArgument(
-            'score_model_file_path',
-            default_value=SCORE_MODEL_PATH,
-            description='The absolute file path to the score trt engine'),
-
-        DeclareLaunchArgument(
             'rt_detr_engine_file_path',
             default_value=RTDETR_ENGINE_PATH,
             description='The absolute file path to the RT-DETR TensorRT engine file'),
@@ -107,7 +96,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'ess_depth_threshold',
-            default_value='0.35',
+            default_value='0.4',
             description='Threshold value ranges between 0.0 and 1.0 '
                         'for filtering disparity with confidence.'),
 
@@ -126,8 +115,6 @@ def generate_launch_description():
     texture_path = LaunchConfiguration('texture_path')
     refine_engine_file_path = LaunchConfiguration('refine_engine_file_path')
     score_engine_file_path = LaunchConfiguration('score_engine_file_path')
-    refine_model_file_path = LaunchConfiguration('refine_model_file_path')
-    score_model_file_path = LaunchConfiguration('score_model_file_path')
     rt_detr_engine_file_path = LaunchConfiguration('rt_detr_engine_file_path')
     ess_depth_engine_file_path = LaunchConfiguration('ess_depth_engine_file_path')
     ess_depth_threshold = LaunchConfiguration('ess_depth_threshold')
@@ -368,14 +355,12 @@ def generate_launch_description():
             'mesh_file_path': mesh_file_path,
             'texture_path': texture_path,
 
-            'refine_model_file_path': refine_model_file_path,
             'refine_engine_file_path': refine_engine_file_path,
             'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
             'refine_input_binding_names': ['input1', 'input2'],
             'refine_output_tensor_names': ['output_tensor1', 'output_tensor2'],
             'refine_output_binding_names': ['output1', 'output2'],
 
-            'score_model_file_path': score_model_file_path,
             'score_engine_file_path': score_engine_file_path,
             'score_input_tensor_names': ['input_tensor1', 'input_tensor2'],
             'score_input_binding_names': ['input1', 'input2'],
@@ -392,7 +377,6 @@ def generate_launch_description():
             'mesh_file_path': mesh_file_path,
             'texture_path': texture_path,
 
-            'refine_model_file_path': refine_model_file_path,
             'refine_engine_file_path': refine_engine_file_path,
             'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
             'refine_input_binding_names': ['input1', 'input2'],

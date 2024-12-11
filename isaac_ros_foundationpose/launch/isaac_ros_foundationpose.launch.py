@@ -139,6 +139,12 @@ def generate_launch_description():
         arguments=['-d', rviz_config_path],
         condition=IfCondition(launch_rviz))
 
+    detection2_d_array_filter_node = ComposableNode(
+        name='detection2_d_array_filter',
+        package='isaac_ros_foundationpose',
+        plugin='nvidia::isaac_ros::foundationpose::Detection2DArrayFilter',
+        remappings=[('detection2_d_array', 'detections_output')]
+    )
     detection2_d_to_mask_node = ComposableNode(
         name='detection2_d_to_mask',
         package='isaac_ros_foundationpose',
@@ -146,7 +152,9 @@ def generate_launch_description():
         parameters=[{
             'mask_width': mask_width,
             'mask_height': mask_height
-        }])
+        }],
+        remappings=[('segmentation', 'rt_detr_segmentation')]
+    )
 
     foundationpose_bbox_container = ComposableNodeContainer(
         name='foundationpose_container',
@@ -155,6 +163,7 @@ def generate_launch_description():
         executable='component_container_mt',
         composable_node_descriptions=[
             foundationpose_node,
+            detection2_d_array_filter_node,
             detection2_d_to_mask_node],
         output='screen',
         condition=IfCondition(launch_bbox_to_mask)

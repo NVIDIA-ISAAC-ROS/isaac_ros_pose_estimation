@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_dope</name>
-  <version>3.1.0</version>
+  <version>3.2.0</version>
   <description>Deep learning based pose estimation</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -30,6 +30,8 @@
   <author>Ethan Yu</author>
   <author>Jeff Smith</author>
   <author>Jaiveer Singh</author>
+  <author> Shruti Sharma </author>
+  <author> Toya Takahashi </author>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
@@ -39,7 +41,8 @@
 
   <depend>isaac_ros_dnn_image_encoder</depend>
   <depend>isaac_ros_nitros</depend>
-  <depend>isaac_ros_nitros_pose_array_type</depend>
+  <depend>isaac_ros_nitros_camera_info_type</depend>
+  <depend>isaac_ros_nitros_detection3_d_array_type</depend>
   <depend>isaac_ros_nitros_tensor_list_type</depend>
   <depend>isaac_ros_tensor_list_interfaces</depend>
   <depend>isaac_ros_tensor_rt</depend>
@@ -48,8 +51,10 @@
   <depend>message_filters</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
+  <depend>vision_msgs</depend>
   <depend>tf2_eigen</depend>
 
+  <build_depend>gxf_isaac_gems</build_depend>
   <build_depend>isaac_ros_common</build_depend>
   <build_depend>isaac_ros_gxf</build_depend>
 

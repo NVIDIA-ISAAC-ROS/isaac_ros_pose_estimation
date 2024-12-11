@@ -36,6 +36,11 @@ rclcpp_components_register_nodes(foundationpose_tracking_node "nvidia::isaac_ros
 set(node_plugins
   "${node_plugins}nvidia::isaac_ros::foundationpose::FoundationPoseTrackingNode;$<TARGET_FILE:foundationpose_tracking_node>\n")
 
+# Detection2DArrayFilter utils node
+ament_auto_add_library(detection2_d_array_filter SHARED src/detection2_d_array_filter.cpp)
+rclcpp_components_register_nodes(detection2_d_array_filter "nvidia::isaac_ros::foundationpose::Detection2DArrayFilter")
+set(node_plugins "${node_plugins}nvidia::isaac_ros::foundationpose::Detection2DArrayFilter;$<TARGET_FILE:detection2_d_array_filter>\n")
+
 # Detection2DToMask utils node
 ament_auto_add_library(detection2_d_to_mask SHARED src/detection2_d_to_mask.cpp)
 rclcpp_components_register_nodes(detection2_d_to_mask "nvidia::isaac_ros::foundationpose::Detection2DToMask")
@@ -74,5 +79,11 @@ if(BUILD_TESTING)
   add_launch_test(test/isaac_ros_foundationpose_iterative_refine_pol.py TIMEOUT "900")
   add_launch_test(test/isaac_ros_foundationpose_tracking_pol.py TIMEOUT "900")
 endif()
+
+
+# Embed versioning information into installed files
+ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
+include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
+generate_version_info(${PROJECT_NAME})
 
 ament_auto_package(INSTALL_TO_SHARE config launch rviz)

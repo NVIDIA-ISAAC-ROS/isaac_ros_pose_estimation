@@ -66,6 +66,7 @@ private:
   const float min_depth_;
   const float max_depth_;
   const int32_t refine_iterations_;
+  const StringList symmetry_planes_;
 
   // Models file path
   const std::string refine_model_file_path_;

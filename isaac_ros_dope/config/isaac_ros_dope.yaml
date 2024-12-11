@@ -1,0 +1,30 @@
+%YAML 1.2
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+---
+id: [0xb9a27f9a9c9b3c40, 0xf7620fa5914c9644]
+name: DopeDecoder
+version: 1.0.0
+components:
+  - id: [0x03022c23f899e397, 0xaf817e602e657ba6]
+    type: nvidia::isaac_ros::dope::DopeDecoder
+    input_output_groups:
+      - input_keys: [tensorlist_receiver, camera_model_input]
+        output_keys: [detection3darray_transmitter]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_tensor_list_nchw_rgb_f32, nitros_camera_info]
+                output_formats: [nitros_detection3_d_array]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%

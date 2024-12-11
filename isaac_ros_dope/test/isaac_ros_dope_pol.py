@@ -26,7 +26,6 @@ import pathlib
 import time
 
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import PoseArray
 from isaac_ros_test import IsaacROSBaseTest, JSONConversion
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -37,6 +36,7 @@ import pytest
 import rclpy
 
 from sensor_msgs.msg import CameraInfo, Image
+from vision_msgs.msg import Detection3DArray
 
 MODEL_FILE_NAME = 'dope_ketchup_pol.onnx'
 
@@ -76,7 +76,7 @@ def generate_test_description():
             'frame_id': 'map'
         }],
         remappings=[('belief_map_array', 'tensor_sub'),
-                    ('dope/pose_array', 'poses')])
+                    ('dope/detections', 'detections')])
 
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     dope_encoder_launch = IncludeLaunchDescription(
@@ -86,7 +86,7 @@ def generate_test_description():
         launch_arguments={
             'input_image_width': '852',
             'input_image_height': '480',
-            'network_image_width': '640',
+            'network_image_width': '852',
             'network_image_height': '480',
             'attach_to_shared_component_container': 'True',
             'component_container_name': 'dope_container',
@@ -132,7 +132,7 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
 
         received_messages = {}
 
-        self.generate_namespace_lookup(['image', 'camera_info', 'poses'])
+        self.generate_namespace_lookup(['image', 'camera_info', 'detections'])
 
         image_pub = self.node.create_publisher(
             Image, self.namespaces['image'], self.DEFAULT_QOS)
@@ -140,16 +140,16 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
         camera_info_pub = self.node.create_publisher(
             CameraInfo, self.namespaces['camera_info'], self.DEFAULT_QOS)
 
-        # The current DOPE decoder outputs PoseArray
+        # The current DOPE decoder outputs Detection3DArray
         subs = self.create_logging_subscribers(
-            [('poses', PoseArray)], received_messages)
-
+            [('detections', Detection3DArray)], received_messages)
         try:
-            json_file = self.filepath / 'test_cases/pose_estimation_0/image.json'
-            image = JSONConversion.load_image_from_json(json_file)
+            image_json_file = self.filepath / 'test_cases/pose_estimation_0/image.json'
+            image = JSONConversion.load_image_from_json(image_json_file)
             image.header.stamp = self.node.get_clock().now().to_msg()
 
-            camera_info = CameraInfo()
+            camera_info_json_file = self.filepath / 'test_cases/pose_estimation_0/camera_info.json'
+            camera_info = JSONConversion.load_camera_info_from_json(camera_info_json_file)
             camera_info.header = image.header
             camera_info.distortion_model = 'plumb_bob'
 
@@ -161,16 +161,18 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
                 image_pub.publish(image)
                 camera_info_pub.publish(camera_info)
                 rclpy.spin_once(self.node, timeout_sec=(0.1))
-                if 'poses' in received_messages:
+                if 'detections' in received_messages:
                     done = True
                     break
             self.assertTrue(done, 'Timeout. Appropriate output not received')
             self.node._logger.info('A message was successfully received')
 
-            received_poses = received_messages['poses'].poses
-            self.node._logger.info(f'Poses received: {received_poses}')
-            self.assertGreaterEqual(len(received_poses), 1, 'Did not receive at least one pose')
+            received_detections = received_messages['detections'].detections
+            self.node._logger.info(f'Detections received: {received_detections}')
+            self.assertGreaterEqual(len(received_detections), 1,
+                                    'Did not receive at least one detection')
 
         finally:
             self.node.destroy_subscription(subs)
             self.node.destroy_publisher(image_pub)
+            self.node.destroy_publisher(camera_info_pub)

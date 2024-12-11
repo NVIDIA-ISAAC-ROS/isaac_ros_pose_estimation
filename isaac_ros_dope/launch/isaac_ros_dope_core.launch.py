@@ -45,6 +45,8 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
 
         # DOPE Decoder parameters
         object_name = LaunchConfiguration('object_name')
+        enable_tf_publishing = LaunchConfiguration('enable_tf_publishing')
+        map_peak_threshold = LaunchConfiguration('map_peak_threshold')
 
         return {
             'dope_inference_node': ComposableNode(
@@ -70,9 +72,12 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                 plugin='nvidia::isaac_ros::dope::DopeDecoderNode',
                 parameters=[{
                     'object_name': object_name,
+                    'enable_tf_publishing': enable_tf_publishing,
+                    'map_peak_threshold': map_peak_threshold,
                 }],
                 remappings=[('belief_map_array', 'tensor_sub'),
-                            ('dope/pose_array', 'poses')]
+                            ('dope/detections', 'detections'),
+                            ('camera_info', '/dope_encoder/crop/camera_info')]
             )
         }
 
@@ -91,19 +96,19 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
         return {
             'network_image_width': DeclareLaunchArgument(
                 'network_image_width',
-                default_value='640',
+                default_value='1280',
                 description='The input image width that the network expects'),
             'network_image_height': DeclareLaunchArgument(
                 'network_image_height',
-                default_value='480',
+                default_value='720',
                 description='The input image height that the network expects'),
             'encoder_image_mean': DeclareLaunchArgument(
                 'encoder_image_mean',
-                default_value='[0.5, 0.5, 0.5]',
+                default_value='[0.485, 0.456, 0.406]',
                 description='The mean for image normalization'),
             'encoder_image_stddev': DeclareLaunchArgument(
                 'encoder_image_stddev',
-                default_value='[0.5, 0.5, 0.5]',
+                default_value='[0.229, 0.224, 0.225]',
                 description='The standard deviation for image normalization'),
             'model_file_path': DeclareLaunchArgument(
                 'model_file_path',
@@ -147,10 +152,18 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                 'object_name',
                 default_value='Ketchup',
                 description='The object class that the DOPE network is detecting'),
+            'map_peak_threshold': DeclareLaunchArgument(
+                'map_peak_threshold',
+                default_value='0.1',
+                description='The minimum value of a peak in a DOPE belief map'),
             'force_engine_update': DeclareLaunchArgument(
                 'force_engine_update',
                 default_value='False',
                 description='Whether TensorRT should update the TensorRT engine file or not'),
+            'enable_tf_publishing': DeclareLaunchArgument(
+                'enable_tf_publishing',
+                default_value='False',
+                description='Whether Dope Decoder will broadcast poses to the TF tree or not'),
             'dope_encoder_launch': IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]

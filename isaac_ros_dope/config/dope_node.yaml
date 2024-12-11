@@ -22,8 +22,12 @@ components:
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-- name: posearray_out
+- name: detection3darray_out
   type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 12
+- name: camera_model_input
+  type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
 - name: allocator
@@ -32,18 +36,22 @@ components:
   type: nvidia::isaac_ros::dope::DopeDecoder
   parameters:
     tensorlist_receiver: tensorlist_in
-    posearray_transmitter: posearray_out
+    camera_model_input: camera_model_input
+    detection3darray_transmitter: detection3darray_out
     allocator: allocator
     object_dimensions: []
-    camera_matrix: []
     object_name: ""
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: tensorlist_in
     min_size: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: camera_model_input
+    min_size: 1
 - type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
   parameters:
-    transmitter: posearray_out
+    transmitter: detection3darray_out
     min_size: 1
 ---
 name: sink
@@ -65,7 +73,7 @@ components:
 - name: edge0
   type: nvidia::gxf::Connection
   parameters:
-    source: dope_decoder/posearray_out
+    source: dope_decoder/detection3darray_out
     target: sink/signal
 ---
 components:

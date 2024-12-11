@@ -16,6 +16,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cv_bridge/cv_bridge.h>
+#include <string>
 #include <opencv2/opencv.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
@@ -39,24 +40,14 @@ class Detection2DToMask : public rclcpp::Node
 {
 public:
   explicit Detection2DToMask(const rclcpp::NodeOptions & options)
-  : Node("detection2_d_to_mask", options)
+  : Node("detection2_d_to_mask", options),
+    mask_width_(declare_parameter<int>("mask_width", 640)),
+    mask_height_(declare_parameter<int>("mask_height", 480)),
+    image_pub_{create_publisher<sensor_msgs::msg::Image>("segmentation", 10)},
+    detection2_d_sub_{create_subscription<vision_msgs::msg::Detection2D>(
+        "detection2_d", rclcpp::QoS(rclcpp::SensorDataQoS()),
+        std::bind(&Detection2DToMask::boundingBoxCallback, this, std::placeholders::_1))}
   {
-    // Create a publisher for the mono8 image
-    image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("segmentation", 10);
-
-    this->declare_parameter<int>("mask_width", 640);
-    this->declare_parameter<int>("mask_height", 480);
-    this->get_parameter("mask_width", mask_width_);
-    this->get_parameter("mask_height", mask_height_);
-
-    detection2_d_array_sub_ = this->create_subscription<vision_msgs::msg::Detection2DArray>(
-      "detection2_d_array", 10,
-      std::bind(&Detection2DToMask::boundingBoxArrayCallback, this, std::placeholders::_1));
-    // Create subscriber for Detection2D
-    detection2_d_sub_ = this->create_subscription<vision_msgs::msg::Detection2D>(
-      "detection2_d", 10,
-      std::bind(&Detection2DToMask::boundingBoxCallback, this, std::placeholders::_1));
-
     RCLCPP_INFO(this->get_logger(), "Mask Height: %d, Mask Width: %d", mask_height_, mask_width_);
   }
 
@@ -83,56 +74,11 @@ public:
     image_pub_->publish(image_msg);
   }
 
-  void boundingBoxArrayCallback(const vision_msgs::msg::Detection2DArray::SharedPtr msg)
-  {
-    // Find the detection bounding box with the highest confidence
-    float max_confidence = 0;
-    vision_msgs::msg::Detection2D max_confidence_detection;
-    // Iterate through the detections and find the one with the highest confidence
-    for (auto detection : msg->detections) {
-      // Iterate through all the hypotheses for this detection
-      // and find the one with the highest confidence
-      for (auto result : detection.results) {
-        if (result.hypothesis.score > max_confidence) {
-          max_confidence = result.hypothesis.score;
-          max_confidence_detection = detection;
-        }
-      }
-    }
-
-    // If no detection was found, return error
-    if (max_confidence == 0) {
-      RCLCPP_INFO(this->get_logger(), "No detection found with non-zero confidence");
-      return;
-    }
-
-    // Convert Detection2D to a binary mono8 image
-    cv::Mat image = cv::Mat::zeros(mask_height_, mask_width_, CV_8UC1);
-    // Draws a rectangle filled with 255
-    cv::rectangle(
-      image,
-      cv::Point(
-        max_confidence_detection.bbox.center.position.x - max_confidence_detection.bbox.size_x / 2,
-        max_confidence_detection.bbox.center.position.y - max_confidence_detection.bbox.size_y / 2),
-      cv::Point(
-        max_confidence_detection.bbox.center.position.x + max_confidence_detection.bbox.size_x / 2,
-        max_confidence_detection.bbox.center.position.y + max_confidence_detection.bbox.size_y / 2),
-      cv::Scalar(255), -1);
-
-    // Convert the OpenCV image to a ROS sensor_msgs::msg::Image and publish it
-    std_msgs::msg::Header header(msg->header);
-    cv_bridge::CvImage cv_image(header, "mono8", image);
-    sensor_msgs::msg::Image image_msg;
-    cv_image.toImageMsg(image_msg);
-    image_pub_->publish(image_msg);
-  }
-
 private:
+  int mask_width_;
+  int mask_height_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
   rclcpp::Subscription<vision_msgs::msg::Detection2D>::SharedPtr detection2_d_sub_;
-  rclcpp::Subscription<vision_msgs::msg::Detection2DArray>::SharedPtr detection2_d_array_sub_;
-  int mask_height_;
-  int mask_width_;
 };
 
 }  // namespace foundationpose
