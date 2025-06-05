@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,19 +16,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "foundationpose_render.hpp"
-#include "foundationpose_utils.hpp"
 
-#include <Eigen/Dense>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <numeric>
+#include <sstream>
 #include <string>
 
+#include <Eigen/Dense>
 #include <cuda_runtime.h>
+#include <cvcuda/OpConvertTo.hpp>
 #include <cvcuda/OpFlip.hpp>
 #include <cvcuda/OpWarpPerspective.hpp>
-#include <cvcuda/OpConvertTo.hpp>
+#include <opencv2/opencv.hpp>
 
+#include "foundationpose_utils.hpp"
 #include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
 #include "gxf/std/tensor.hpp"
@@ -47,24 +51,14 @@ constexpr char kOriginalTensor[] = "input_tensor2";
 constexpr char RAW_CAMERA_MODEL_GXF_NAME[] = "intrinsics";
 
 constexpr size_t kVertexPoints = 3;
-constexpr size_t kTriangleVertices = 3;
 constexpr size_t kTexcoordsDim = 2;
 constexpr size_t kPTMatrixDim = 3;
-constexpr size_t kTransformationMatrixSize = 4;
 constexpr size_t kPoseMatrixLength = 4;
 constexpr size_t kNumChannels = 3;
 constexpr size_t kOutputRank = 4;
 // Number of slices on the input
 constexpr int kNumBatches = 6;
-constexpr int kFixTextureMapWidth = 1920;
-constexpr int kFixTextureMapHeight = 1080;
-constexpr int kFixTextureMapColor = 128;
 
-typedef Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> RowMajorMatrix;
-
-// From OpenCV camera (cvcam) coordinate system to the OpenGL camera (glcam) coordinate system
-const Eigen::Matrix4f kGLCamInCVCam =
-    (Eigen::Matrix4f(4, 4) << 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1).finished();
 
 RowMajorMatrix ComputeTF(
     float left, float right, float top, float bottom, Eigen::Vector2i out_size) {
@@ -122,12 +116,12 @@ gxf_result_t TransformPts(
   int cols = pts.cols();
   int tfs_size = tfs.size();
   if (tfs_size == 0) {
-    GXF_LOG_ERROR("[FoundationposeRender] The transfomation matrix is empty! ");
+    GXF_LOG_ERROR("[FoundationposeRender] The transformation matrix is empty! ");
     return GXF_FAILURE;
   }
 
   if (tfs[0].cols() != tfs[0].rows()) {
-    GXF_LOG_ERROR("[FoundationposeRender] The transfomation matrix has different rows and cols! ");
+    GXF_LOG_ERROR("[FoundationposeRender] The transformation matrix has different rows and cols! ");
     return GXF_FAILURE;
   }
   int dim = tfs[0].rows();
@@ -153,19 +147,6 @@ gxf_result_t TransformPts(
 
   // Return the result vector
   return GXF_SUCCESS;
-}
-
-// Adding one column of ones to the matrix
-Eigen::MatrixXf ToHomo(const Eigen::MatrixXf& pts) {
-  int rows = pts.rows();
-  int cols = pts.cols();
-
-  Eigen::MatrixXf ones = Eigen::MatrixXf::Ones(rows, 1);
-
-  Eigen::MatrixXf homo(rows, cols + 1);
-  homo << pts, ones;
-
-  return homo;
 }
 
 void WrapImgPtrToNHWCTensor(
@@ -196,6 +177,23 @@ void WrapFloatPtrToNHWCTensor(
   nvcv::TensorShape tensor_shape{shape, "NHWC"};
   nvcv::TensorDataStridedCuda output_data(tensor_shape, nvcv::TYPE_F32, output_buffer);
   output_tensor = nvcv::TensorWrapData(output_data);
+}
+
+// Normalize the image to 0-1 using cvcuda, save the result to float_texture_map_tensor
+void NormalizeImage(cudaStream_t cuda_stream, uint8_t* texture_map_device,
+                    int image_height, int image_width, int image_channels, 
+                    nvcv::Tensor& float_texture_map_tensor){
+  nvcv::Tensor texture_map_tensor;
+  WrapImgPtrToNHWCTensor(texture_map_device, texture_map_tensor, 1, image_height, image_width, image_channels);
+
+  nvcv::TensorShape::ShapeType shape{1, image_height, image_width, image_channels};
+  nvcv::TensorShape tensor_shape{shape, "NHWC"};
+  float_texture_map_tensor = nvcv::Tensor(tensor_shape, nvcv::TYPE_F32);
+
+  const float scale_factor =  1.0f / 255.0f;
+  cvcuda::ConvertTo convert_op;
+  convert_op(cuda_stream, texture_map_tensor, float_texture_map_tensor, scale_factor, 0.0f);
+  CHECK_CUDA_ERRORS(cudaGetLastError());
 }
 
 gxf_result_t ProjectMatrixFromIntrinsics(
@@ -274,12 +272,6 @@ gxf_result_t FoundationposeRender::registerInterface(gxf::Registrar* registrar) 
 
   result &= registrar->parameter(
       pose_array_transmitter_, "output", "Pose Array Output", "The ouput poses as a pose array");
-  
-  result &= registrar->parameter(
-      mesh_file_path_, "mesh_file_path", "obj mesh file path", "Path to your object mesh file");
-
-  result &= registrar->parameter(
-      texture_path_, "texture_path", "texture file path", "Path to your texture file");
 
   result &= registrar->parameter(
       mode_, "mode", "Render Mode", "render mode select from refine or score");
@@ -302,6 +294,14 @@ gxf_result_t FoundationposeRender::registerInterface(gxf::Registrar* registrar) 
   result &= registrar->parameter(
       refine_iterations_, "refine_iterations", "refine iterations", 
       "Number of iterations on the refine network (render->refine->transoformation)", 1);
+
+  result &= registrar->parameter(
+      debug_, "debug", "Debug", 
+      "When enabled, saves intermediate results to disk for debugging", false);
+  
+  result &= registrar->parameter(
+      debug_dir_, "debug_dir", "Debug Directory", 
+      "Directory to save intermediate results for debugging", std::string("/tmp/foundationpose"));
 
   result &= registrar->parameter(
       allocator_, "allocator", "Allocator", "Output Allocator");
@@ -346,6 +346,10 @@ gxf_result_t FoundationposeRender::registerInterface(gxf::Registrar* registrar) 
       "The ouput poses as a pose array",
       gxf::Registrar::NoDefaultParameter(), GXF_PARAMETER_FLAGS_OPTIONAL);
 
+  result &= registrar->parameter(
+      mesh_storage_, "mesh_storage", "Mesh Storage",
+      "The mesh storage for mesh reuse");
+
   return gxf::ToResultCode(result);
 }
 
@@ -356,117 +360,6 @@ gxf_result_t FoundationposeRender::start() noexcept {
     GXF_LOG_ERROR("[FoundationposeRender] Refine iterations should be at least 1");
     return GXF_FAILURE;
   }
-
-  // Load the obj mesh file
-  // TODO: optimize the mesh loading by passing mesh data between codelets to avoid
-  // duplicate calculation. Could calcuate from sampling node and broadcast to the other nodes
-  Assimp::Importer importer;
-  const aiScene* scene = importer.ReadFile(
-      mesh_file_path_.get(),
-      aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType);
-
-  if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-    GXF_LOG_ERROR("[FoundationposeRender] Error while loading mesh file ERROR::ASSIMP::");
-    GXF_LOG_ERROR(importer.GetErrorString());
-    return GXF_FAILURE;
-  }
-
-  if (scene->mNumMeshes == 0) {
-    GXF_LOG_ERROR("[FoundationposeRender] No mesh was found in the mesh file");
-    return GXF_FAILURE;
-  }
-
-  // Only take the first mesh
-  const aiMesh* mesh = scene->mMeshes[0];
-
-  mesh_diameter_ = CalcMeshDiameter(mesh);
-  auto min_max_vertex = FindMinMaxVertex(mesh);
-  auto mesh_model_center = (min_max_vertex.second + min_max_vertex.first) / 2.0;
-
-  // Walk through each of the mesh's vertices
-  for (unsigned int v = 0; v < mesh->mNumVertices; v++) {
-    vertices_.push_back(mesh->mVertices[v].x - mesh_model_center[0]);
-    vertices_.push_back(mesh->mVertices[v].y - mesh_model_center[1]);
-    vertices_.push_back(mesh->mVertices[v].z - mesh_model_center[2]);
-
-    // Check if the mesh has texture coordinates
-    if (mesh->mTextureCoords[0]) {
-      texcoords_.push_back(mesh->mTextureCoords[0][v].x);
-      texcoords_.push_back(1 - mesh->mTextureCoords[0][v].y);
-    }
-  }
-
-  // Walk through each of the mesh's faces (a face is a mesh its triangle)
-  for (unsigned int f = 0; f < mesh->mNumFaces; f++) {
-    const aiFace& face = mesh->mFaces[f];
-
-    // We assume the face is a triangle due to aiProcess_Triangulate
-    if (face.mNumIndices == 3) {
-      for (unsigned int i = 0; i < face.mNumIndices; i++) {
-        mesh_faces_.push_back(face.mIndices[i]);
-      }
-    } else {
-      GXF_LOG_ERROR(
-          "Only triangle is supported, but the object face has %u vertices. ", face.mNumIndices);
-      return GXF_FAILURE;
-    }
-  }
-
-  cv::Mat rgb_texture_map;
-  if (!std::filesystem::exists(texture_path_.get())) {
-    GXF_LOG_WARNING("[FoundationposeRender], %s could not be found, assign texture map with pure color",
-                    texture_path_.get().c_str());
-    rgb_texture_map = cv::Mat(kFixTextureMapHeight, kFixTextureMapWidth, CV_8UC3,
-                              cv::Scalar(kFixTextureMapColor, kFixTextureMapColor, kFixTextureMapColor));
-  } else {
-    // Load the texture map
-    cv::Mat texture_map = cv::imread(texture_path_.get());
-    cv::cvtColor(texture_map, rgb_texture_map, cv::COLOR_BGR2RGB);
-  }
-
-  if (!rgb_texture_map.isContinuous()) {
-    GXF_LOG_ERROR("[FoundationposeRender] Texture map is not continuous");
-    return GXF_FAILURE;
-  }
-
-  if (rgb_texture_map.channels() != kNumChannels) {
-    GXF_LOG_ERROR(
-        "[FoundationposeRender] Recieved texture map has %d number of channels, but expected %lu.",
-        rgb_texture_map.channels(), kNumChannels);
-    return GXF_FAILURE;
-  }
-  texture_map_height_ = rgb_texture_map.rows;
-  texture_map_width_ = rgb_texture_map.cols;
-  GXF_LOG_DEBUG("[FoundationposeRender] Texture map height: %d, width: %d", texture_map_height_, texture_map_width_);
-
-  // The number of vertices is the size of the vertices array divided by 3 (since it's x,y,z)
-  num_vertices_ = vertices_.size() / kVertexPoints;
-  // The number of texture coordinates is the size of the texcoords array divided by 2 (since it's u,v)
-  num_texcoords_ = texcoords_.size() / kTexcoordsDim;
-  // The number of faces is the size of the faces array divided by 3 (since each face has 3 edges)
-  num_faces_ = mesh_faces_.size() / kTriangleVertices;
-
-  // Check if the mesh data is valid
-  if (num_vertices_ == 0 || num_texcoords_ == 0 || num_faces_ == 0) {
-    GXF_LOG_ERROR("[FoundationposeRender] Empty input from mesh file. ");
-    return GXF_FAILURE;
-  }
-
-  if (sizeof(vertices_[0]) != sizeof(float) || 
-      sizeof(texcoords_[0]) != sizeof(float) || 
-      sizeof(mesh_faces_[0]) != sizeof(int32_t)) {  
-    GXF_LOG_ERROR("[FoundationposeRender] Invalid data type from mesh file. ");
-    return GXF_FAILURE;
-  }
-
-  // Assign vertices to the class memeber
-  mesh_vertices_ =
-      Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
-          vertices_.data(), num_vertices_, 3);
-
-  GXF_LOG_DEBUG("[FoundationposeRender] Number of mesh vertices: %d", num_vertices_);
-  GXF_LOG_DEBUG("[FoundationposeRender] Number of mesh faces: %d", num_faces_);
-  GXF_LOG_DEBUG("[FoundationposeRender] Number of mesh texcoords: %d", num_texcoords_);
 
   // Get cuda stream from stream pool
   auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
@@ -480,48 +373,170 @@ gxf_result_t FoundationposeRender::start() noexcept {
   if (!cuda_stream_handle_.is_null()) {
     cuda_stream_ = cuda_stream_handle_->stream().value();
   }
+  return GXF_SUCCESS;
+}
 
-  // Allocate device memory for mesh data
-  size_t faces_size = mesh_faces_.size() * sizeof(int32_t);
-  size_t texcoords_size = texcoords_.size() * sizeof(float);
-  size_t mesh_vertices_size = vertices_.size() * sizeof(float);
-  
-  CHECK_CUDA_ERRORS(cudaMalloc(&mesh_vertices_device_, mesh_vertices_size));
-  CHECK_CUDA_ERRORS(cudaMalloc(&mesh_faces_device_, faces_size));
-  CHECK_CUDA_ERRORS(cudaMalloc(&texcoords_device_, texcoords_size));
-  CHECK_CUDA_ERRORS(cudaMalloc(&texture_map_device_, rgb_texture_map.total() * kNumChannels));
+gxf_result_t FoundationposeRender::AllocateDeviceMemory(
+    size_t N, size_t H, size_t W, size_t C, size_t num_vertices, float mesh_diameter, uint32_t total_poses) {
 
-  CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-    mesh_vertices_device_, vertices_.data(), mesh_vertices_size , cudaMemcpyHostToDevice, cuda_stream_));
-  CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-    mesh_faces_device_, mesh_faces_.data(), faces_size, cudaMemcpyHostToDevice, cuda_stream_));
-  CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-    texcoords_device_, texcoords_.data(), texcoords_.size() * sizeof(float), cudaMemcpyHostToDevice, cuda_stream_));
-  CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-    texture_map_device_, reinterpret_cast<uint8_t*>(rgb_texture_map.data),
-    rgb_texture_map.total() * kNumChannels, cudaMemcpyHostToDevice, cuda_stream_));
+  // Allocate rendering resources if not already cached
+  if (!render_data_cached_) {
+    size_t rast_out_size = N * H * W * 4 * sizeof(float);
+    size_t color_size = N * H * W * C * sizeof(float);
+    size_t xyz_map_size = N * H * W * C * sizeof(float);
+    size_t texcoords_out_size = N * H * W * kTexcoordsDim * sizeof(float);
+    size_t bbox2d_size = N * 4 * sizeof(float);
 
-  // Preprocess mesh data
-  nvcv::Tensor texture_map_tensor;
-  WrapImgPtrToNHWCTensor(texture_map_device_, texture_map_tensor, 1, texture_map_height_, texture_map_width_, kNumChannels);
+    CHECK_CUDA_ERRORS(cudaMalloc(&rast_out_device_, rast_out_size));
+    CHECK_CUDA_ERRORS(cudaMalloc(&texcoords_out_device_, texcoords_out_size));
+    CHECK_CUDA_ERRORS(cudaMalloc(&color_device_, color_size));
+    CHECK_CUDA_ERRORS(cudaMalloc(&xyz_map_device_, xyz_map_size));
+    CHECK_CUDA_ERRORS(cudaMalloc(&bbox2d_device_, bbox2d_size));
+    CHECK_CUDA_ERRORS(cudaMalloc(&transformed_xyz_map_device_, N * H * W * C * sizeof(float)));
+    CHECK_CUDA_ERRORS(cudaMalloc(&transformed_rgb_device_, N * H * W * C * sizeof(float)));
+    CHECK_CUDA_ERRORS(cudaMalloc(&score_rendered_output_device_, total_poses * 2 * H * W * C * sizeof(float)));
+    CHECK_CUDA_ERRORS(cudaMalloc(&score_original_output_device_, total_poses * 2 * H * W * C * sizeof(float)));
+    CHECK_CUDA_ERRORS(cudaMalloc(&wp_image_device_, N * H * W * C * sizeof(uint8_t)));
+    CHECK_CUDA_ERRORS(cudaMalloc(&trans_matrix_device_, N * 9 * sizeof(float)));
 
-  nvcv::TensorShape::ShapeType shape{1, texture_map_height_, texture_map_width_, kNumChannels};
-  nvcv::TensorShape tensor_shape{shape, "NHWC"};
-  float_texture_map_tensor_ = nvcv::Tensor(tensor_shape, nvcv::TYPE_F32);
+    nvcv::TensorShape::ShapeType shape{N, H, W, C};
+    nvcv::TensorShape tensor_shape{shape, "NHWC"};
+    render_rgb_tensor_ = nvcv::Tensor(tensor_shape, nvcv::TYPE_F32);
+    render_xyz_map_tensor_ = nvcv::Tensor(tensor_shape, nvcv::TYPE_F32);
 
-  const float scale_factor =  1.0f / 255.0f;
-  cvcuda::ConvertTo convert_op;
-  convert_op(cuda_stream_, texture_map_tensor, float_texture_map_tensor_, scale_factor, 0.0f);
-  CHECK_CUDA_ERRORS(cudaGetLastError());
-  CHECK_CUDA_ERRORS(cudaStreamSynchronize(cuda_stream_));
+    cr_ = new CR::CudaRaster();
+    render_data_cached_ = true;
+  }
+
+  // Handle vertex data separately since it can change with different meshes
+  if (num_vertices != num_vertices_cache_) {
+    if (pts_cam_device_) {
+      CHECK_CUDA_ERRORS(cudaFree(pts_cam_device_));
+    }
+    if (pose_clip_device_) {
+      CHECK_CUDA_ERRORS(cudaFree(pose_clip_device_));
+    }
+    size_t pts_cam_size = N * num_vertices * kVertexPoints * sizeof(float);
+    size_t pose_clip_size = N * num_vertices * 4 * sizeof(float);
+    CHECK_CUDA_ERRORS(cudaMalloc(&pts_cam_device_, pts_cam_size));
+    CHECK_CUDA_ERRORS(cudaMalloc(&pose_clip_device_, pose_clip_size));
+    num_vertices_cache_ = num_vertices;
+  }
 
   return GXF_SUCCESS;
 }
 
+gxf_result_t FoundationposeRender::FreeDeviceMemory() {
+  if (cr_) {
+    delete cr_;
+  }
+
+  // Free all CUDA resources
+  CHECK_CUDA_ERRORS(cudaFree(pose_clip_device_));
+  CHECK_CUDA_ERRORS(cudaFree(rast_out_device_));
+  CHECK_CUDA_ERRORS(cudaFree(pts_cam_device_));
+  CHECK_CUDA_ERRORS(cudaFree(texcoords_out_device_));
+  CHECK_CUDA_ERRORS(cudaFree(color_device_));
+  CHECK_CUDA_ERRORS(cudaFree(xyz_map_device_));
+  CHECK_CUDA_ERRORS(cudaFree(transformed_xyz_map_device_));
+  CHECK_CUDA_ERRORS(cudaFree(transformed_rgb_device_));
+  CHECK_CUDA_ERRORS(cudaFree(score_rendered_output_device_));
+  CHECK_CUDA_ERRORS(cudaFree(score_original_output_device_));
+  CHECK_CUDA_ERRORS(cudaFree(wp_image_device_));
+  CHECK_CUDA_ERRORS(cudaFree(trans_matrix_device_));
+  CHECK_CUDA_ERRORS(cudaFree(bbox2d_device_));
+
+  return GXF_SUCCESS;
+}
+
+void FoundationposeRender::PreparePerspectiveTransformMatrix(
+    cudaStream_t cuda_stream, const std::vector<RowMajorMatrix>& tfs,
+    float* trans_matrix_device, size_t N) {
+
+  std::vector<float> trans_mat_flattened(N*9, 0);
+  for(size_t index = 0; index < N; index++) {
+    for (size_t i = 0; i < kPTMatrixDim; i++) {
+      for (size_t j = 0; j < kPTMatrixDim; j++) {
+        trans_mat_flattened[index*kPTMatrixDim*kPTMatrixDim + i*kPTMatrixDim + j] = tfs[index](i,j);
+      }
+    }
+  }
+
+  CHECK_CUDA_ERRORS(cudaMemcpyAsync(
+      trans_matrix_device,
+      trans_mat_flattened.data(),
+      trans_mat_flattened.size()*sizeof(float),
+      cudaMemcpyHostToDevice, 
+      cuda_stream));
+}
+
+void FoundationposeRender::BatchedWarpPerspective(
+    cudaStream_t cuda_stream, const nvcv::Tensor& src_tensor, 
+    void* dst_device_ptr, void* trans_matrix_device,
+    int num_of_trans_mat, int src_H, int src_W, int dst_H, int dst_W, 
+    int C, nvcv::ImageFormat fmt, int interp_flags, const float4& border_value) {
+
+  // Build image batch input
+  std::vector<nvcv::Image> wp_src;
+  nvcv::ImageDataStridedCuda::Buffer buf_src;
+  buf_src.numPlanes           = 1;
+  buf_src.planes[0].width     = src_W;
+  buf_src.planes[0].height    = src_H;
+  buf_src.planes[0].rowStride = src_W*fmt.planePixelStrideBytes(0);
+  buf_src.planes[0].basePtr   = reinterpret_cast<NVCVByte*>(src_tensor.exportData<nvcv::TensorDataStridedCuda>()->basePtr());
+  auto img_src = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{fmt, buf_src});
+
+  for (int i = 0; i < num_of_trans_mat; ++i) {
+      wp_src.emplace_back(img_src);
+  }
+
+  nvcv::ImageBatchVarShape batch_wp_src(num_of_trans_mat);
+  batch_wp_src.pushBack(wp_src.begin(), wp_src.end());
+
+  // Build batched output tensor
+  std::vector<nvcv::Image> wp_dst;
+  for (int i = 0; i < num_of_trans_mat; ++i) {        
+      nvcv::ImageDataStridedCuda::Buffer buf;
+      buf.numPlanes           = 1;
+      buf.planes[0].width     = dst_W;
+      buf.planes[0].height    = dst_H;
+      buf.planes[0].rowStride = dst_W * fmt.planePixelStrideBytes(0);
+      buf.planes[0].basePtr   = reinterpret_cast<NVCVByte*>(dst_device_ptr) + i * dst_H * dst_W * C * fmt.planePixelStrideBytes(0) / C;
+      auto img = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{fmt, buf});
+      wp_dst.push_back(img);
+  }
+  nvcv::ImageBatchVarShape batch_wp_dst(num_of_trans_mat);
+  batch_wp_dst.pushBack(wp_dst.begin(), wp_dst.end());
+
+  // Create transformation matrix tensor
+  nvcv::TensorDataStridedCuda::Buffer buf_trans_mat;
+  buf_trans_mat.strides[1] = sizeof(float);
+  buf_trans_mat.strides[0] = 9*buf_trans_mat.strides[1];
+  buf_trans_mat.basePtr    = reinterpret_cast<NVCVByte*>(trans_matrix_device);
+
+  auto transMatrixTensor = nvcv::TensorWrapData(nvcv::TensorDataStridedCuda{
+      nvcv::TensorShape({num_of_trans_mat, 9}, nvcv::TENSOR_NW),
+      nvcv::TYPE_F32,
+      buf_trans_mat
+  });
+
+  // Perform the warp perspective operation
+  cvcuda::WarpPerspective warpPerspectiveOpBatch(num_of_trans_mat);
+  warpPerspectiveOpBatch(cuda_stream, batch_wp_src, batch_wp_dst, transMatrixTensor, interp_flags, NVCV_BORDER_CONSTANT, border_value);
+  CHECK_CUDA_ERRORS(cudaGetLastError());
+}
 
 gxf_result_t FoundationposeRender::NvdiffrastRender(
-    cudaStream_t cuda_stream, std::vector<Eigen::MatrixXf>& poses, Eigen::Matrix3f& K, Eigen::MatrixXf& bbox2d, int rgb_H,
-    int rgb_W, int H, int W, nvcv::Tensor& flip_color_tensor, nvcv::Tensor& flip_xyz_map_tensor) {
+    cudaStream_t cuda_stream, 
+    std::shared_ptr<const MeshData> mesh_data_ptr, 
+    std::vector<Eigen::MatrixXf>& poses, 
+    Eigen::Matrix3f& K, 
+    Eigen::MatrixXf& bbox2d, 
+    int rgb_H, int rgb_W, 
+    int H, int W, 
+    nvcv::Tensor& flip_color_tensor, 
+    nvcv::Tensor& flip_xyz_map_tensor) {
+  
   // N represents the number of poses
   size_t N = poses.size();
 
@@ -530,87 +545,75 @@ gxf_result_t FoundationposeRender::NvdiffrastRender(
     GXF_LOG_ERROR("[FoundationposeRender] The vertice channel should be same as pose matrix length - 1");
     return GXF_FAILURE;
   }
-  transform_pts(cuda_stream, pts_cam_device_, mesh_vertices_device_, pose_device_, num_vertices_, kVertexPoints, N, kPoseMatrixLength);
+  
+  transform_pts(cuda_stream, pts_cam_device_, 
+               mesh_data_ptr->mesh_vertices_device, 
+               pose_device_, 
+               mesh_data_ptr->num_vertices, 
+               kVertexPoints, N, kPoseMatrixLength);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
   Eigen::Matrix4f projection_mat;
   auto gxf_result = ProjectMatrixFromIntrinsics(projection_mat, K, rgb_H, rgb_W);
   if (gxf_result != GXF_SUCCESS) {
+    GXF_LOG_ERROR("[FoundationposeRender] Failed to project the matrix from intrinsics");
     return GXF_FAILURE;
-  }
-
-  // Homogeneliaze the vertices to N * 4
-  auto pose_homo = ToHomo(mesh_vertices_);
-  if (pose_homo.rows() != num_vertices_) {
-    GXF_LOG_ERROR("[FoundationposeRender] The number of vertice should not change after homogeneliaze ");
-    return GXF_FAILURE;
-  }
-  if (pose_homo.cols() != mesh_vertices_.cols() + 1) {
-    GXF_LOG_ERROR("[FoundationposeRender] Points per vertex should increase by one after homogeneliaze");
-    return GXF_FAILURE;
-  }
-
-  // Allocate device memory for the intermedia results on the first frame
-  size_t pose_clip_size = N * num_vertices_ * 4 * sizeof(float);
-  size_t rast_out_size = N * H * W * 4 * sizeof(float);
-  size_t color_size = N * H * W * kNumChannels * sizeof(float);
-  size_t xyz_map_size = N * H * W * kNumChannels * sizeof(float);
-  size_t texcoords_out_size = N * H * W * kTexcoordsDim * sizeof(float);
-  size_t bbox2d_size = N * 4 * sizeof(float);
-
-  if (render_data_cached_ == false) {
-    CHECK_CUDA_ERRORS(cudaMalloc(&pose_clip_device_, pose_clip_size));
-    CHECK_CUDA_ERRORS(cudaMalloc(&rast_out_device_, rast_out_size));
-    CHECK_CUDA_ERRORS(cudaMalloc(&texcoords_out_device_, texcoords_out_size));
-    CHECK_CUDA_ERRORS(cudaMalloc(&color_device_, color_size));
-    CHECK_CUDA_ERRORS(cudaMalloc(&xyz_map_device_, xyz_map_size));
-    CHECK_CUDA_ERRORS(cudaMalloc(&pose_clip_device_, pose_clip_size));
-    CHECK_CUDA_ERRORS(cudaMalloc(&bbox2d_device_, bbox2d_size));
-    cr_ = new CR::CudaRaster();
-    render_data_cached_ = true;
   }
 
   std::vector<float> h_bbox2d;
-  for(int j=0;j<bbox2d.rows();j++){
-      for(int k=0;k<bbox2d.cols();k++){
+  for(int j=0; j<bbox2d.rows(); j++) {
+      for(int k=0; k<bbox2d.cols(); k++) {
           h_bbox2d.push_back(bbox2d(j,k));
       }
   }
 
-  CHECK_CUDA_ERRORS(cudaMemcpyAsync(bbox2d_device_, h_bbox2d.data(), bbox2d_size, cudaMemcpyHostToDevice, cuda_stream));
-  generate_pose_clip(cuda_stream, pose_clip_device_, pose_device_, bbox2d_device_, mesh_vertices_device_, projection_mat, rgb_H, rgb_W, num_vertices_, N);
+  CHECK_CUDA_ERRORS(cudaMemcpyAsync(bbox2d_device_, h_bbox2d.data(), N * 4 * sizeof(float), 
+                                    cudaMemcpyHostToDevice, cuda_stream));
+  generate_pose_clip(cuda_stream, pose_clip_device_, pose_device_, bbox2d_device_, 
+                    mesh_data_ptr->mesh_vertices_device, projection_mat, rgb_H, rgb_W, 
+                    mesh_data_ptr->num_vertices, N);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
   rasterize(
       cuda_stream, cr_,
-      pose_clip_device_, mesh_faces_device_, rast_out_device_,
-      num_vertices_, num_faces_,
+      pose_clip_device_, mesh_data_ptr->mesh_faces_device, rast_out_device_,
+      mesh_data_ptr->num_vertices, mesh_data_ptr->num_faces,
       H, W, N);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
   interpolate(
       cuda_stream,
-      pts_cam_device_, rast_out_device_, mesh_faces_device_, xyz_map_device_,
-      num_vertices_, num_faces_, kVertexPoints,
+      pts_cam_device_, rast_out_device_, mesh_data_ptr->mesh_faces_device, xyz_map_device_,
+      mesh_data_ptr->num_vertices, mesh_data_ptr->num_faces, kVertexPoints,
       H, W, N);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
-  interpolate(
-      cuda_stream,
-      texcoords_device_, rast_out_device_, mesh_faces_device_, texcoords_out_device_,
-      num_vertices_, num_faces_, kTexcoordsDim,
-      H, W, N);
-  CHECK_CUDA_ERRORS(cudaGetLastError());
+  if (mesh_data_ptr->has_tex) {
+    interpolate(
+        cuda_stream,
+        mesh_data_ptr->texcoords_device, rast_out_device_, mesh_data_ptr->mesh_faces_device, texcoords_out_device_,
+        mesh_data_ptr->num_vertices, mesh_data_ptr->num_faces, kTexcoordsDim,
+        H, W, N);
+    CHECK_CUDA_ERRORS(cudaGetLastError());
 
-  auto float_texture_map_data = float_texture_map_tensor_.exportData<nvcv::TensorDataStridedCuda>();
-  texture(
-      cuda_stream,
-      reinterpret_cast<float*>(float_texture_map_data->basePtr()),
-      texcoords_out_device_,
-      color_device_,
-      texture_map_height_, texture_map_width_, kNumChannels,
-      1, H, W, N);
-  CHECK_CUDA_ERRORS(cudaGetLastError());
+    auto float_texture_map_data = float_texture_map_tensor_.exportData<nvcv::TensorDataStridedCuda>();
+    texture(
+        cuda_stream,
+        reinterpret_cast<float*>(float_texture_map_data->basePtr()),
+        texcoords_out_device_,
+        color_device_,
+        mesh_data_ptr->texture_map_height, mesh_data_ptr->texture_map_width, mesh_data_ptr->texture_map_channels,
+        1, H, W, N);
+    CHECK_CUDA_ERRORS(cudaGetLastError());
+  } else {
+    auto float_texture_map_data = float_texture_map_tensor_.exportData<nvcv::TensorDataStridedCuda>();
+    interpolate(
+        cuda_stream,
+        reinterpret_cast<float*>(float_texture_map_data->basePtr()), rast_out_device_, mesh_data_ptr->mesh_faces_device, color_device_,
+        mesh_data_ptr->num_vertices, mesh_data_ptr->num_faces, kVertexPoints,
+        H, W, N);
+    CHECK_CUDA_ERRORS(cudaGetLastError());
+  }
 
   float min_value = 0.0;
   float max_value = 1.0;
@@ -631,8 +634,215 @@ gxf_result_t FoundationposeRender::NvdiffrastRender(
   return GXF_SUCCESS;
 }
 
+void FoundationposeRender::SaveRGBImage(
+    cudaStream_t stream, float* rgb_data, size_t N, 
+    size_t H, size_t W, size_t C, const gxf::Timestamp* timestamp,
+    const std::string& image_type) {
+
+  // Create debug directory structure with proper subfolder
+  std::string data_type = image_type + "_rgb";
+  std::string debug_dir = CreateDebugDirectory(timestamp, data_type);
+
+  if (C != kNumChannels) {
+    GXF_LOG_WARNING(
+        "[FoundationposeRender] RGB image has %zu channels, expected %zu. "
+        "Color visualization may be incorrect.", 
+        C, kNumChannels);
+  }
+
+  std::vector<float> rgb_host(N * H * W * C);
+
+  // Copy data from GPU to CPU
+  CHECK_CUDA_ERRORS(cudaMemcpyAsync(
+    rgb_host.data(), rgb_data, N * H * W * C * sizeof(float), 
+    cudaMemcpyDeviceToHost, stream));
+  CHECK_CUDA_ERRORS(cudaStreamSynchronize(stream));
+
+  // Save each image in the batch
+  for (size_t i = 0; i < N; i++) {
+    cv::Mat rgb_image(H, W, CV_32FC3);
+
+    for (size_t h = 0; h < H; h++) {
+      for (size_t w = 0; w < W; w++) {
+        size_t idx = (i * H * W + h * W + w) * C;
+
+        // OpenCV stores colors in BGR order, rather than RGB.
+        rgb_image.at<cv::Vec3f>(h, w)[0] = rgb_host[idx + 2]; 
+        rgb_image.at<cv::Vec3f>(h, w)[1] = rgb_host[idx + 1];
+        rgb_image.at<cv::Vec3f>(h, w)[2] = rgb_host[idx];
+      }
+    }
+
+    cv::Mat rgb_image_8bit;
+    rgb_image.convertTo(rgb_image_8bit, CV_8UC3, 255.0);
+
+    std::stringstream filename;
+    int batch_idx = (mode_.get() == "refine") ? refine_received_batches_ : score_received_batches_;
+    filename << debug_dir << "/batch" << batch_idx << "_pose" << i << ".png";
+
+    cv::imwrite(filename.str(), rgb_image_8bit);
+    GXF_LOG_DEBUG("[FoundationposeRender] Saved %s RGB image to %s", image_type.c_str(), filename.str().c_str());
+  }
+
+  GXF_LOG_DEBUG("[FoundationposeRender] Saved %zu %s RGB images to %s", N, image_type.c_str(), debug_dir.c_str());
+}
+
+void FoundationposeRender::SaveXYZImage(
+    cudaStream_t stream, float* xyz_data, size_t N, 
+    size_t H, size_t W, size_t C, const gxf::Timestamp* timestamp,
+    const std::string& image_type) {
+  
+  // Create debug directory structure with proper subfolder
+  std::string data_type = image_type + "_xyz";
+  std::string debug_dir = CreateDebugDirectory(timestamp, data_type);
+  
+  if (C != 3) {
+    GXF_LOG_WARNING(
+        "[FoundationposeRender] XYZ image has %zu channels, expected %zu. "
+        "Point cloud visualization may be incorrect.", 
+        C, kNumChannels);
+  }
+
+  std::vector<float> xyz_host(N * H * W * C);
+  
+  CHECK_CUDA_ERRORS(cudaMemcpyAsync(
+    xyz_host.data(), xyz_data, N * H * W * C * sizeof(float), 
+    cudaMemcpyDeviceToHost, stream));
+  CHECK_CUDA_ERRORS(cudaStreamSynchronize(stream));
+  
+  // Save each point cloud image in the batch
+  for (size_t i = 0; i < N; i++) {
+    cv::Mat xyz_color(H, W, CV_8UC3, cv::Scalar(0, 0, 0));
+
+    // Find min/max values for normalization
+    float x_min = std::numeric_limits<float>::max();
+    float x_max = std::numeric_limits<float>::lowest();
+    float y_min = std::numeric_limits<float>::max();
+    float y_max = std::numeric_limits<float>::lowest();
+    float z_min = std::numeric_limits<float>::max();
+    float z_max = std::numeric_limits<float>::lowest();
+
+    // First pass: find min/max values
+    for (size_t h = 0; h < H; h++) {
+      for (size_t w = 0; w < W; w++) {
+        size_t idx = (i * H * W + h * W + w) * C;
+        float x = xyz_host[idx];
+        float y = xyz_host[idx + 1];
+        float z = xyz_host[idx + 2];
+        
+        if (x != 0) {
+          x_min = std::min(x_min, x);
+          x_max = std::max(x_max, x);
+        }
+        if (y != 0) {
+          y_min = std::min(y_min, y);
+          y_max = std::max(y_max, y);
+        }
+        if (z != 0) {
+          z_min = std::min(z_min, z);
+          z_max = std::max(z_max, z);
+        }
+      }
+    }
+
+    // Second pass: create false-color visualization
+    for (size_t h = 0; h < H; h++) {
+      for (size_t w = 0; w < W; w++) {
+        size_t idx = (i * H * W + h * W + w) * C;
+        float x = xyz_host[idx];
+        float y = xyz_host[idx + 1];
+        float z = xyz_host[idx + 2];
+
+        if (x == 0 && y == 0 && z == 0)
+          continue;
+
+        uint8_t r = (x_max > x_min) ? static_cast<uint8_t>(255 * (x - x_min) / (x_max - x_min)) : 0;
+        uint8_t g = (y_max > y_min) ? static_cast<uint8_t>(255 * (y - y_min) / (y_max - y_min)) : 0;
+        uint8_t b = (z_max > z_min) ? static_cast<uint8_t>(255 * (z - z_min) / (z_max - z_min)) : 0;
+
+        // OpenCV stores colors in BGR order, rather than RGB.
+        xyz_color.at<cv::Vec3b>(h, w) = cv::Vec3b(b, g, r);
+      }
+    }
+
+    std::stringstream xyz_filename;
+    int batch_idx = (mode_.get() == "refine") ? refine_received_batches_ : score_received_batches_;
+    xyz_filename << debug_dir << "/batch" << batch_idx << "_pose" << i << ".png";
+
+    cv::imwrite(xyz_filename.str(), xyz_color);
+    GXF_LOG_DEBUG("[FoundationposeRender] Saved %s XYZ image to %s", image_type.c_str(), xyz_filename.str().c_str());
+  }
+  
+  GXF_LOG_INFO("[FoundationposeRender] Saved %zu %s point cloud images to %s", N, image_type.c_str(), debug_dir.c_str());
+}
+
+// Create directory structure for debug images and point clouds
+std::string FoundationposeRender::CreateDebugDirectory(const gxf::Timestamp* timestamp, const std::string& data_type) {
+  // Get timestamp to use for the directory
+  int64_t ts = 0;
+  if (timestamp != nullptr) {
+    // Use the message timestamp in nanoseconds
+    ts = timestamp->acqtime;
+  } else {
+    // Fallback to current time if timestamp is not available
+    auto time_now = std::chrono::system_clock::now();
+    ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      time_now.time_since_epoch()).count();
+  }
+  
+  // Create common base directory path
+  std::stringstream ss;
+  ss << debug_dir_.get() << "/fp_debug_" << ts;
+  std::string base_dir = ss.str();
+  
+  // Create base directory if it doesn't exist
+  if (current_save_dir_ != base_dir) {
+    if (!std::filesystem::exists(base_dir)) {
+      std::filesystem::create_directories(base_dir);
+    }
+    current_save_dir_ = base_dir;
+  }
+  
+  // Create mode-specific subdirectory
+  std::string mode_dir = current_save_dir_ + "/" + mode_.get();
+  if (!std::filesystem::exists(mode_dir)) {
+    std::filesystem::create_directories(mode_dir);
+  }
+  
+  // Create iteration subdirectory if in refine mode
+  std::string iter_dir = mode_dir;
+  if (mode_.get() == "refine" && refine_iterations_ > 1) {
+    iter_dir = mode_dir + "/iteration_" + std::to_string(iteration_count_);
+    if (!std::filesystem::exists(iter_dir)) {
+      std::filesystem::create_directories(iter_dir);
+    }
+  }
+
+  // Create data type specific subfolder
+  std::string data_dir = iter_dir + "/" + data_type;
+  if (!std::filesystem::exists(data_dir)) {
+    std::filesystem::create_directories(data_dir);
+  }
+
+  return data_dir;
+}
+
 gxf_result_t FoundationposeRender::tick() noexcept {
   GXF_LOG_DEBUG("[FoundationposeRender] tick");
+
+  // Get mesh data from sampling component if not already set
+  auto mesh_data_ptr = mesh_storage_.get()->GetMeshData();
+
+  if (float_texture_map_tensor_.empty() || texture_path_cache_ != mesh_data_ptr->texture_path) {
+    NormalizeImage(
+      cuda_stream_,
+      mesh_data_ptr->texture_map_device, 
+      mesh_data_ptr->texture_map_height, 
+      mesh_data_ptr->texture_map_width, 
+      mesh_data_ptr->texture_map_channels, 
+      float_texture_map_tensor_);
+    texture_path_cache_ = mesh_data_ptr->texture_path;
+  }
 
   // Selective receive messages based on the states
   gxf::Entity rgb_message;
@@ -753,11 +963,11 @@ gxf_result_t FoundationposeRender::tick() noexcept {
   auto xyz_map_handle = maybe_xyz_map.value();
   auto poses_handle = maybe_poses.value();
 
-  const size_t pose_nums = poses_handle->shape().dimension(0);
+  const size_t N = poses_handle->shape().dimension(0);
   const size_t pose_rows = poses_handle->shape().dimension(1);
   const size_t pose_cols = poses_handle->shape().dimension(2);
 
-  if (pose_nums == 0) {
+  if (N == 0) {
     GXF_LOG_ERROR("[FoundationposeRender] The received pose is empty");
     return GXF_FAILURE;
   }
@@ -768,7 +978,7 @@ gxf_result_t FoundationposeRender::tick() noexcept {
     return GXF_FAILURE;
   }
 
-  if (poses_handle->size() != pose_nums * pose_rows * pose_cols * sizeof(float)) {
+  if (poses_handle->size() != N * pose_rows * pose_cols * sizeof(float)) {
     GXF_LOG_ERROR("[FoundationposeRender] Unexpected size of the pose tensor");
     return GXF_FAILURE;
   }
@@ -776,7 +986,6 @@ gxf_result_t FoundationposeRender::tick() noexcept {
   const uint32_t rgb_H = rgb_img_info.height;
   const uint32_t rgb_W = rgb_img_info.width;
 
-  const uint32_t N = pose_nums;
   const uint32_t W = resized_image_width_;
   const uint32_t H = resized_image_height_;
   const uint32_t C = kNumChannels;
@@ -789,25 +998,15 @@ gxf_result_t FoundationposeRender::tick() noexcept {
        0.0, gxf_camera_model->focal_length.y, gxf_camera_model->principal_point.y,
        0.0, 0.0, 1.0;
 
-  // Malloc device memory for the output
-  if (!rgb_data_cached_) {
-    CHECK_CUDA_ERRORS(cudaMalloc(&pts_cam_device_,  N * num_vertices_ * kVertexPoints * sizeof(float)));
-    CHECK_CUDA_ERRORS(cudaMalloc(&transformed_xyz_map_device_, N * H * W * C * sizeof(float)));
-    CHECK_CUDA_ERRORS(cudaMalloc(&transformed_rgb_device_, N * H * W * C * sizeof(float)));
-    CHECK_CUDA_ERRORS(cudaMalloc(&score_rendered_output_device_, total_poses * 2 * H * W * C * sizeof(float)));
-    CHECK_CUDA_ERRORS(cudaMalloc(&score_original_output_device_, total_poses * 2 * H * W * C * sizeof(float)));
-    CHECK_CUDA_ERRORS(cudaMalloc(&wp_image_device_, N * H * W * C * sizeof(uint8_t)));
-    CHECK_CUDA_ERRORS(cudaMalloc(&trans_matrix_device_,N*9*sizeof(float)));
-
-    nvcv::TensorShape::ShapeType shape{N, H, W, C};
-    nvcv::TensorShape tensor_shape{shape, "NHWC"};
-    render_rgb_tensor_ = nvcv::Tensor(tensor_shape, nvcv::TYPE_F32);
-    render_xyz_map_tensor_ = nvcv::Tensor(tensor_shape, nvcv::TYPE_F32);
-
-    rgb_data_cached_ = true;
+  // Allocate device memory
+  auto alloc_result = AllocateDeviceMemory(N, H, W, C, mesh_data_ptr->num_vertices, 
+                                        mesh_data_ptr->mesh_diameter, total_poses);
+  if (alloc_result != GXF_SUCCESS) {
+    GXF_LOG_ERROR("[FoundationposeRender] Failed to allocate device memory");
+    return alloc_result;
   }
 
-  std::vector<float> pose_host(pose_nums * pose_rows * pose_cols);
+  std::vector<float> pose_host(N * pose_rows * pose_cols);
   pose_device_ = reinterpret_cast<float*>(poses_handle->pointer());
   CHECK_CUDA_ERRORS(cudaMemcpyAsync(
       pose_host.data(), poses_handle->pointer(), poses_handle->size(), cudaMemcpyDeviceToHost, cuda_stream_));
@@ -815,14 +1014,14 @@ gxf_result_t FoundationposeRender::tick() noexcept {
 
   // Construct pose matrix from pointer
   std::vector<Eigen::MatrixXf> poses;
-  for (size_t i = 0; i < pose_nums; i++) {
+  for (size_t i = 0; i < N; i++) {
     Eigen::Map<Eigen::MatrixXf> mat(
         pose_host.data() + i * pose_rows * pose_cols, pose_rows, pose_cols);
     poses.push_back(mat);
   }
   
   Eigen::Vector2i out_size = {H, W};
-  auto tfs = ComputeCropWindowTF(poses, K, out_size, crop_ratio_, mesh_diameter_);
+  auto tfs = ComputeCropWindowTF(poses, K, out_size, crop_ratio_, mesh_data_ptr->mesh_diameter);
   if (tfs.size() == 0) {
     GXF_LOG_ERROR("[FoundationposeRender] The transform matrix vector is empty");
     return GXF_FAILURE;
@@ -835,9 +1034,10 @@ gxf_result_t FoundationposeRender::tick() noexcept {
     return GXF_FAILURE;
   }
 
-  // Render the object using give poses
+  // Render the object using give poses, passing member variables explicitly
   gxf_result = NvdiffrastRender(
-      cuda_stream_, poses, K, bbox2d, rgb_H, rgb_W, H, W, render_rgb_tensor_, render_xyz_map_tensor_);
+      cuda_stream_, mesh_data_ptr, poses, K, bbox2d, rgb_H, rgb_W, H, W, 
+      render_rgb_tensor_, render_xyz_map_tensor_);
   if (gxf_result != GXF_SUCCESS) {
     return GXF_FAILURE;
   }
@@ -856,108 +1056,41 @@ gxf_result_t FoundationposeRender::tick() noexcept {
   const int xyz_flags = NVCV_INTERP_NEAREST;
   const float4 border_value = {0,0,0,0};
 
-  const float scale_factor =  1.0f / 255.0f;
+  const float scale_factor = 1.0f / 255.0f;
   int num_of_trans_mat = N;
-  cvcuda::WarpPerspective warpPerspectiveOpBatch(num_of_trans_mat);
   cvcuda::ConvertTo convert_op;
 
-  std::vector<float> trans_mat_flattened(N*9,0);
-  for(size_t index = 0; index<N; index++){
-    for (size_t i = 0; i < kPTMatrixDim; i++) {
-        for (size_t j = 0; j < kPTMatrixDim; j++) {
-          trans_mat_flattened[index*kPTMatrixDim*kPTMatrixDim+i*kPTMatrixDim+j] = tfs[index](i,j);
-        }
-      }
-  }
-  CHECK_CUDA_ERRORS(cudaMemcpyAsync(trans_matrix_device_,
-                                    trans_mat_flattened.data(),
-                                    trans_mat_flattened.size()*sizeof(float),
-                                    cudaMemcpyHostToDevice, cuda_stream_));
+  // Prepare transformation matrices
+  PreparePerspectiveTransformMatrix(cuda_stream_, tfs, trans_matrix_device_, N);
 
-  nvcv::TensorDataStridedCuda::Buffer buf_trans_mat;
-  buf_trans_mat.strides[1] = sizeof(float);
-  buf_trans_mat.strides[0] = 9*buf_trans_mat.strides[1];
-  buf_trans_mat.basePtr    = reinterpret_cast<NVCVByte *>(trans_matrix_device_);
-
-  auto transMatrixTensor = nvcv::TensorWrapData(nvcv::TensorDataStridedCuda{
-      nvcv::TensorShape({num_of_trans_mat, 9}, nvcv::TENSOR_NW),
-      nvcv::TYPE_F32,
-      buf_trans_mat
-  });
-
-  // Build rgb image batch input
+  // Process RGB image and XYZ map using BatchedWarpPerspective
   const nvcv::ImageFormat fmt_rgb = nvcv::FMT_RGB8;
-  std::vector<nvcv::Image> wp_rgb_src;
-  int imageSizeRGB = rgb_H * rgb_W * fmt_rgb.planePixelStrideBytes(0);
-  nvcv::ImageDataStridedCuda::Buffer buf_rgb;
-  buf_rgb.numPlanes           = 1;
-  buf_rgb.planes[0].width     = rgb_W;
-  buf_rgb.planes[0].height    = rgb_H;
-  buf_rgb.planes[0].rowStride = rgb_W*fmt_rgb.planePixelStrideBytes(0);
-  buf_rgb.planes[0].basePtr   = reinterpret_cast<NVCVByte *>(rgb_img_handle->pointer());
-  auto img_rgb = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{fmt_rgb, buf_rgb});
+  BatchedWarpPerspective(
+      cuda_stream_, 
+      rgb_tensor, 
+      wp_image_device_, 
+      trans_matrix_device_, 
+      num_of_trans_mat,
+      rgb_H, rgb_W, 
+      H, W, 
+      C,
+      fmt_rgb,
+      rgb_flags,
+      border_value);
 
-  for (int i = 0; i < num_of_trans_mat; ++i) {
-      wp_rgb_src.emplace_back(img_rgb);
-  }
-
-  nvcv::ImageBatchVarShape batch_wp_rgb_src(num_of_trans_mat);
-  batch_wp_rgb_src.pushBack(wp_rgb_src.begin(), wp_rgb_src.end());  
-
-  // Build xyz map batch input
   const nvcv::ImageFormat fmt_xyz = nvcv::FMT_RGBf32;
-  std::vector<nvcv::Image> wp_xyz_src;
-  int imageSizeXYZ = rgb_H * rgb_W * fmt_xyz.planePixelStrideBytes(0);
-  nvcv::ImageDataStridedCuda::Buffer buf_xyz;
-  buf_xyz.numPlanes           = 1;
-  buf_xyz.planes[0].width     = rgb_W;
-  buf_xyz.planes[0].height    = rgb_H;
-  buf_xyz.planes[0].rowStride = rgb_W*fmt_xyz.planePixelStrideBytes(0);
-  buf_xyz.planes[0].basePtr   = reinterpret_cast<NVCVByte *>(xyz_map_handle->pointer());
-  auto img_xyz = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{fmt_xyz, buf_xyz});
-
-  for (int i = 0; i < num_of_trans_mat; ++i) {
-      wp_xyz_src.emplace_back(img_xyz);
-  }
-
-  nvcv::ImageBatchVarShape batch_wp_xyz_src(num_of_trans_mat);
-  batch_wp_xyz_src.pushBack(wp_xyz_src.begin(), wp_xyz_src.end()); 
-
-  // Build batched RGB output tensor
-  std::vector<nvcv::Image> wp_rgb_dst;
-  for (int i = 0; i < num_of_trans_mat; ++i) {        
-      nvcv::ImageDataStridedCuda::Buffer buf;
-      buf.numPlanes           = 1;
-      buf.planes[0].width     = W;
-      buf.planes[0].height    = H;
-      buf.planes[0].rowStride = W * fmt_rgb.planePixelStrideBytes(0);
-      buf.planes[0].basePtr   = reinterpret_cast<NVCVByte *>(wp_image_device_ + i * H * W * C);
-      auto img = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{fmt_rgb, buf});
-      wp_rgb_dst.push_back(img);
-  }
-  nvcv::ImageBatchVarShape batch_wp_rgb_dst(num_of_trans_mat);
-  batch_wp_rgb_dst.pushBack(wp_rgb_dst.begin(),wp_rgb_dst.end());
-
-  // Build batched XYZ map output tensor
-  std::vector<nvcv::Image> wp_xyz_dst;
-  for (int i = 0; i < num_of_trans_mat; ++i) {        
-        nvcv::ImageDataStridedCuda::Buffer buf;
-        buf.numPlanes           = 1;
-        buf.planes[0].width     = W;
-        buf.planes[0].height    = H;
-        buf.planes[0].rowStride = W * fmt_xyz.planePixelStrideBytes(0);
-        buf.planes[0].basePtr   = reinterpret_cast<NVCVByte *>(transformed_xyz_map_device_ + i * H * W * C);
-        auto img = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{fmt_xyz, buf});
-        wp_xyz_dst.push_back(img);
-  }
-  nvcv::ImageBatchVarShape batch_wp_xyz_dst(num_of_trans_mat);
-  batch_wp_xyz_dst.pushBack(wp_xyz_dst.begin(),wp_xyz_dst.end());
-
-  // Warp Perspective for RGB image and XYZ map
-  warpPerspectiveOpBatch(cuda_stream_, batch_wp_rgb_src, batch_wp_rgb_dst, transMatrixTensor, rgb_flags, NVCV_BORDER_CONSTANT, border_value);
-  CHECK_CUDA_ERRORS(cudaGetLastError());
-  warpPerspectiveOpBatch(cuda_stream_, batch_wp_xyz_src, batch_wp_xyz_dst, transMatrixTensor, xyz_flags, NVCV_BORDER_CONSTANT, border_value);
-  CHECK_CUDA_ERRORS(cudaGetLastError());
+  BatchedWarpPerspective(
+      cuda_stream_, 
+      xyz_map_tensor, 
+      transformed_xyz_map_device_, 
+      trans_matrix_device_, 
+      num_of_trans_mat,
+      rgb_H, rgb_W, 
+      H, W, 
+      C,
+      fmt_xyz,
+      xyz_flags,
+      border_value);
 
   // Convert RGB image from U8 to float
   nvcv::TensorShape::ShapeType transformed_shape{N,H,W,C};
@@ -976,7 +1109,7 @@ gxf_result_t FoundationposeRender::tick() noexcept {
       cuda_stream_,
       transformed_xyz_map_device_,
       reinterpret_cast<float*>(poses_handle->pointer()),
-      N, W * H, mesh_diameter_ / 2, min_depth_, max_depth_);
+      N, W * H, mesh_data_ptr->mesh_diameter / 2, min_depth_, max_depth_);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
   auto render_rgb_data = render_rgb_tensor_.exportData<nvcv::TensorDataStridedCuda>();
@@ -986,13 +1119,13 @@ gxf_result_t FoundationposeRender::tick() noexcept {
       cuda_stream_,
       reinterpret_cast<float*>(render_xyz_map_data->basePtr()),
       reinterpret_cast<float*>(poses_handle->pointer()),
-      N, W * H, mesh_diameter_ / 2, min_depth_, max_depth_);
+      N, W * H, mesh_data_ptr->mesh_diameter / 2, min_depth_, max_depth_);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
   // Score mode, accumulation stage
   // Only accumulate the output tensors and return
-  if (mode_.get() == "score" && score_recevied_batches_ < kNumBatches - 1) {
-    auto score_output_offset = score_recevied_batches_*N*H*W*2*C;
+  if (mode_.get() == "score" && score_received_batches_ < kNumBatches - 1) {
+    auto score_output_offset = score_received_batches_*N*H*W*2*C;
     concat(
         cuda_stream_,
         reinterpret_cast<float*>(render_rgb_data->basePtr()),
@@ -1009,7 +1142,40 @@ gxf_result_t FoundationposeRender::tick() noexcept {
         N, H, W, C, C);
     CHECK_CUDA_ERRORS(cudaGetLastError());
     CHECK_CUDA_ERRORS(cudaStreamSynchronize(cuda_stream_));
-    score_recevied_batches_ += 1;
+
+    auto maybe_timestamp_final = rgb_message.get<gxf::Timestamp>();
+    const gxf::Timestamp* timestamp_ptr_final = nullptr;
+    if (maybe_timestamp_final) {
+      timestamp_ptr_final = maybe_timestamp_final.value();
+    }
+
+    GXF_LOG_DEBUG("[FoundationposeRender] Saving debug images in score mode (final)");
+    if (debug_.get()) {
+      SaveRGBImage(
+          cuda_stream_,
+          reinterpret_cast<float*>(render_rgb_data->basePtr()),
+          N, H, W, C,
+          timestamp_ptr_final, "rendered");
+      
+      SaveXYZImage(
+          cuda_stream_,
+          reinterpret_cast<float*>(render_xyz_map_data->basePtr()),
+          N, H, W, C,
+          timestamp_ptr_final, "rendered");
+          
+      SaveRGBImage(
+          cuda_stream_,
+          transformed_rgb_device_,
+          N, H, W, C,
+          timestamp_ptr_final, "original");
+          
+      SaveXYZImage(
+          cuda_stream_,
+          transformed_xyz_map_device_,
+          N, H, W, C,
+          timestamp_ptr_final, "original");
+    }
+    score_received_batches_ += 1;
     return GXF_SUCCESS;
   }
 
@@ -1046,7 +1212,7 @@ gxf_result_t FoundationposeRender::tick() noexcept {
   std::array<int32_t, nvidia::gxf::Shape::kMaxRank> output_shape{
       static_cast<int>(batch_size), static_cast<int>(H), static_cast<int>(W), C + C};
 
-  // Initializing GXF tensor
+  // Prepare output GXF tensor
   auto result = rendered_tensor->reshape<float>(
       nvidia::gxf::Shape{output_shape, kOutputRank}, nvidia::gxf::MemoryStorageType::kDevice,
       allocator_);
@@ -1079,6 +1245,43 @@ gxf_result_t FoundationposeRender::tick() noexcept {
       reinterpret_cast<float*>(original_tensor->pointer()),
       N, H, W, C, C);
     CHECK_CUDA_ERRORS(cudaGetLastError());
+    
+    // Save rendered images in refine mode
+    auto maybe_timestamp_refine = rgb_message.get<gxf::Timestamp>();
+    const gxf::Timestamp* timestamp_ptr_refine = nullptr;
+    if (maybe_timestamp_refine) {
+      timestamp_ptr_refine = maybe_timestamp_refine.value();
+    }
+    
+    if (debug_.get()) {
+      GXF_LOG_DEBUG("[FoundationposeRender] Saving debug images in refine mode");
+      
+      // Save rendered RGB and point cloud images
+      SaveRGBImage(
+          cuda_stream_,
+          reinterpret_cast<float*>(render_rgb_data->basePtr()),
+          N, H, W, C, 
+          timestamp_ptr_refine, "rendered");
+      
+      SaveXYZImage(
+          cuda_stream_,
+          reinterpret_cast<float*>(render_xyz_map_data->basePtr()),
+          N, H, W, C,
+          timestamp_ptr_refine, "rendered");
+          
+      // Save original (transformed) RGB and point cloud images
+      SaveRGBImage(
+          cuda_stream_,
+          transformed_rgb_device_,
+          N, H, W, C,
+          timestamp_ptr_refine, "original");
+          
+      SaveXYZImage(
+          cuda_stream_,
+          transformed_xyz_map_device_,
+          N, H, W, C,
+          timestamp_ptr_refine, "original");
+    }
 
     // Publish to itself during refinement iterations
     if (iteration_count_ < refine_iterations_-1) {
@@ -1105,9 +1308,9 @@ gxf_result_t FoundationposeRender::tick() noexcept {
     }
 
     // Update loop and batch counters
-    refine_recevied_batches_ += 1;
-    if (refine_recevied_batches_ == kNumBatches) {
-      refine_recevied_batches_ = 0;
+    refine_received_batches_ += 1;
+    if (refine_received_batches_ == kNumBatches) {
+      refine_received_batches_ = 0;
       iteration_count_ += 1;
     }
     if (iteration_count_ == refine_iterations_) {
@@ -1116,7 +1319,7 @@ gxf_result_t FoundationposeRender::tick() noexcept {
   } else {
     // Score mode, and all messages are accumulated.
     // Concat the last sliced output tensors and publish the results
-    auto score_output_offset = score_recevied_batches_*N*H*W*2*C;
+    auto score_output_offset = score_received_batches_*N*H*W*2*C;
     concat(
       cuda_stream_,
       reinterpret_cast<float*>(render_rgb_data->basePtr()),
@@ -1137,39 +1340,49 @@ gxf_result_t FoundationposeRender::tick() noexcept {
         reinterpret_cast<float*>(rendered_tensor->pointer()), score_rendered_output_device_, rendered_tensor->size(), cudaMemcpyDeviceToDevice, cuda_stream_));
     CHECK_CUDA_ERRORS(cudaMemcpyAsync(
         reinterpret_cast<float*>(original_tensor->pointer()), score_original_output_device_, original_tensor->size(), cudaMemcpyDeviceToDevice, cuda_stream_));
-    score_recevied_batches_ = 0;
+
+    auto maybe_timestamp_final = rgb_message.get<gxf::Timestamp>();
+    const gxf::Timestamp* timestamp_ptr_final = nullptr;
+    if (maybe_timestamp_final) {
+      timestamp_ptr_final = maybe_timestamp_final.value();
+    }
+
+    GXF_LOG_DEBUG("[FoundationposeRender] Saving debug images in score mode (final)");
+    if (debug_.get()) {
+      SaveRGBImage(
+          cuda_stream_,
+          reinterpret_cast<float*>(render_rgb_data->basePtr()),
+          N, H, W, C,
+          timestamp_ptr_final, "rendered");
+      
+      SaveXYZImage(
+          cuda_stream_,
+          reinterpret_cast<float*>(render_xyz_map_data->basePtr()),
+          N, H, W, C,
+          timestamp_ptr_final, "rendered");
+          
+      SaveRGBImage(
+          cuda_stream_,
+          transformed_rgb_device_,
+          N, H, W, C,
+          timestamp_ptr_final, "original");
+          
+      SaveXYZImage(
+          cuda_stream_,
+          transformed_xyz_map_device_,
+          N, H, W, C,
+          timestamp_ptr_final, "original");
+    }
+    score_received_batches_ = 0;
   }
 
   CHECK_CUDA_ERRORS(cudaStreamSynchronize(cuda_stream_));
   return gxf::ToResultCode(pose_array_transmitter_->publish(std::move(output_message)));
 }
 
-nvidia::gxf::Expected<bool> FoundationposeRender::isAcceptingRequest() {
-  return (iteration_count_ == 0 && refine_recevied_batches_ == 0);
-}
-
 gxf_result_t FoundationposeRender::stop() noexcept { 
-  delete cr_;
-
-  CHECK_CUDA_ERRORS(cudaFree(pose_clip_device_));
-  CHECK_CUDA_ERRORS(cudaFree(mesh_faces_device_));
-  CHECK_CUDA_ERRORS(cudaFree(rast_out_device_));
-  CHECK_CUDA_ERRORS(cudaFree(pts_cam_device_));
-  CHECK_CUDA_ERRORS(cudaFree(texcoords_out_device_));
-  CHECK_CUDA_ERRORS(cudaFree(color_device_));
-  CHECK_CUDA_ERRORS(cudaFree(xyz_map_device_));
-  CHECK_CUDA_ERRORS(cudaFree(texcoords_device_));
-  CHECK_CUDA_ERRORS(cudaFree(texture_map_device_));
-
-  CHECK_CUDA_ERRORS(cudaFree(transformed_xyz_map_device_));
-  CHECK_CUDA_ERRORS(cudaFree(transformed_rgb_device_));
-  CHECK_CUDA_ERRORS(cudaFree(score_rendered_output_device_));
-  CHECK_CUDA_ERRORS(cudaFree(score_original_output_device_));
-  CHECK_CUDA_ERRORS(cudaFree(wp_image_device_));
-  CHECK_CUDA_ERRORS(cudaFree(trans_matrix_device_));
-  CHECK_CUDA_ERRORS(cudaFree(bbox2d_device_));
-
-  return GXF_SUCCESS;
+  return FreeDeviceMemory();
 }
+
 }  // namespace isaac_ros
 }  // namespace nvidia

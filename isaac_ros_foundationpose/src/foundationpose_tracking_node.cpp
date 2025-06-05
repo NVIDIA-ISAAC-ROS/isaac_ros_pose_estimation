@@ -80,10 +80,10 @@ const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"gxf_isaac_foundationpose", "gxf/lib/libgxf_isaac_foundationpose.so"},
 };
 
-const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
-  "isaac_ros_foundationpose",
+const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {};
+const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {
+  "config/isaac_ros_foundationpose_spec.yaml"
 };
-const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {};
 const std::vector<std::string> GENERATOR_RULE_FILENAMES = {"config/namespace_injector_rule.yaml"};
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -142,7 +142,6 @@ FoundationPoseTrackingNode::FoundationPoseTrackingNode(rclcpp::NodeOptions optio
   configuration_file_(
     declare_parameter<std::string>("configuration_file", "foundationpose_model_config.yaml")),
   mesh_file_path_(declare_parameter<std::string>("mesh_file_path", "textured_simple.obj")),
-  texture_path_(declare_parameter<std::string>("texture_path", "texture_map.png")),
   min_depth_(declare_parameter<float>("min_depth", 0.1)),
   max_depth_(declare_parameter<float>("max_depth", 4.0)),
   refine_model_file_path_(
@@ -250,20 +249,7 @@ void FoundationPoseTrackingNode::postLoadGraphCallback()
 
   // Set the mesh path from parameter
   getNitrosContext().setParameterStr(
-    "render", "nvidia::isaac_ros::FoundationposeRender", "mesh_file_path", mesh_file_path_);
-
-  getNitrosContext().setParameterStr(
-    "render", "nvidia::isaac_ros::FoundationposeRender", "texture_path", texture_path_);
-
-  getNitrosContext().setParameterStr(
-    "transform", "nvidia::isaac_ros::FoundationposeTransformation", "mesh_file_path",
-    mesh_file_path_);
-
-  getNitrosContext().setParameterStr(
-    "decoder", "nvidia::isaac_ros::FoundationposeDecoder", "mesh_file_path", mesh_file_path_);
-
-  getNitrosContext().setParameterStr(
-    "decoder", "nvidia::isaac_ros::FoundationposeDecoder", "mesh_file_path", mesh_file_path_);
+    "utils", "nvidia::isaac_ros::MeshStorage", "mesh_file_path", mesh_file_path_);
 
   // Set the refine network TensorRT configs from parameter
   getNitrosContext().setParameterStr(

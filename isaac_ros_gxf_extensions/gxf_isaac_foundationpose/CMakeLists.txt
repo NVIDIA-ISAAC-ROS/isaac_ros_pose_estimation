@@ -49,13 +49,13 @@ ament_auto_add_library(${PROJECT_NAME} SHARED
     
     gxf/foundationpose/foundationpose_sampling.cpp
     gxf/foundationpose/foundationpose_sampling.cu
+    gxf/foundationpose/foundationpose_sync.cpp
     gxf/foundationpose/foundationpose_render.cpp
     gxf/foundationpose/foundationpose_render.cu
     gxf/foundationpose/foundationpose_decoder.cpp
     gxf/foundationpose/foundationpose_decoder.cu
     gxf/foundationpose/foundationpose_transformation.cpp
-    gxf/foundationpose/foundationpose_utils.cpp
-    gxf/foundationpose/render_receptive_scheduling_term.cpp
+    gxf/foundationpose/mesh_storage.cpp
     gxf/foundationpose/foundationpose_ext.cpp
 )
 

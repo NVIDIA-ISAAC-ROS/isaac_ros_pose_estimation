@@ -40,7 +40,6 @@ from vision_msgs.msg import Detection2D, Detection3DArray
 
 
 MESH_FILE_NAME = 'textured_simple.obj'
-TEXTURE_MAP_NAME = 'texture_map.png'
 
 REFINE_MODEL_NAME = 'dummy_refine_model.onnx'
 REFINE_ENGINE_NAME = 'dummy_refine_trt_engine.plan'
@@ -66,8 +65,6 @@ def generate_test_description():
         parameters=[{
             'mesh_file_path': os.path.dirname(__file__) +
                 '/test_cases/foundationpose/' + MESH_FILE_NAME,
-            'texture_path': os.path.dirname(__file__) +
-                '/test_cases/foundationpose/' + TEXTURE_MAP_NAME,
 
             'refine_model_file_path':  os.path.dirname(__file__) +
                 '/../../test/models/' + REFINE_MODEL_NAME,

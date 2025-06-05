@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,6 +30,18 @@
 #include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
 
 #include "isaac_ros_foundationpose/foundationpose_node.hpp"
+
+// Helper function to convert StringList to readable string format
+std::string StringListToString(const StringList & string_list)
+{
+  std::string result = "[";
+  for (size_t i = 0; i < string_list.size(); ++i) {
+    if (i > 0) {result += ", ";}
+    result += "\"" + string_list[i] + "\"";
+  }
+  result += "]";
+  return result;
+}
 
 namespace nvidia
 {
@@ -80,10 +92,10 @@ const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
   {"gxf_isaac_foundationpose", "gxf/lib/libgxf_isaac_foundationpose.so"},
 };
 
-const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
-  "isaac_ros_foundationpose",
+const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {};
+const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {
+  "config/isaac_ros_foundationpose_spec.yaml"
 };
-const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {};
 const std::vector<std::string> GENERATOR_RULE_FILENAMES = {"config/namespace_injector_rule.yaml"};
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -142,12 +154,17 @@ FoundationPoseNode::FoundationPoseNode(rclcpp::NodeOptions options)
   configuration_file_(
     declare_parameter<std::string>("configuration_file", "foundationpose_model_config.yaml")),
   mesh_file_path_(declare_parameter<std::string>("mesh_file_path", "textured_simple.obj")),
-  texture_path_(declare_parameter<std::string>("texture_path", "texture_map.png")),
   min_depth_(declare_parameter<float>("min_depth", 0.1)),
   max_depth_(declare_parameter<float>("max_depth", 4.0)),
   refine_iterations_(declare_parameter<int>("refine_iterations", 1)),
+  symmetry_axes_(
+    declare_parameter<StringList>("symmetry_axes", StringList())),
   symmetry_planes_(
     declare_parameter<StringList>("symmetry_planes", StringList())),
+  fixed_axis_angles_(
+    declare_parameter<StringList>("fixed_axis_angles", StringList())),
+  fixed_translations_(
+    declare_parameter<StringList>("fixed_translations", StringList())),
 
   refine_model_file_path_(
     declare_parameter<std::string>("refine_model_file_path", "/tmp/refine_model.onnx")),
@@ -176,7 +193,13 @@ FoundationPoseNode::FoundationPoseNode(rclcpp::NodeOptions options)
   score_output_binding_names_(
     declare_parameter<StringList>("score_output_binding_names", StringList())),
 
-  tf_frame_name_(declare_parameter<std::string>("tf_frame_name", "fp_object"))
+  discard_time_ms_(declare_parameter<int>("discard_msg_older_than_ms", 1000)),
+  discard_old_messages_(declare_parameter<bool>("discard_old_messages", false)),
+  pose_estimation_timeout_ms_(declare_parameter<int>("pose_estimation_timeout_ms", 5000)),
+  sync_threshold_(declare_parameter<int>("sync_threshold", 0)),
+  tf_frame_name_(declare_parameter<std::string>("tf_frame_name", "fp_object")),
+  debug_(declare_parameter<bool>("debug", false)),
+  debug_dir_(declare_parameter<std::string>("debug_dir", "/tmp/foundationpose"))
 {
   RCLCPP_DEBUG(get_logger(), "[FoundationPoseNode] Constructor");
 
@@ -278,6 +301,31 @@ FoundationPoseNode::FoundationPoseNode(rclcpp::NodeOptions options)
 
   rcl_yaml_node_struct_fini(foundationpose_params);
 
+  param_subscriber_ = std::make_shared<rclcpp::ParameterEventHandler>(this);
+  mesh_file_path_param_cb_handle_ = param_subscriber_->add_parameter_callback(
+    "mesh_file_path",
+    std::bind(&FoundationPoseNode::UpdateMeshFilePathCallback, this, std::placeholders::_1));
+  tf_frame_name_param_cb_handle_ = param_subscriber_->add_parameter_callback(
+    "tf_frame_name",
+    std::bind(&FoundationPoseNode::UpdateTfFrameNameCallback, this, std::placeholders::_1));
+
+  // Register parameter callbacks for constraint parameters
+  fixed_translations_param_cb_handle_ = param_subscriber_->add_parameter_callback(
+    "fixed_translations",
+    std::bind(&FoundationPoseNode::UpdateFixedTranslationsCallback, this, std::placeholders::_1));
+
+  fixed_axis_angles_param_cb_handle_ = param_subscriber_->add_parameter_callback(
+    "fixed_axis_angles",
+    std::bind(&FoundationPoseNode::UpdateFixedAxisAnglesCallback, this, std::placeholders::_1));
+
+  symmetry_axes_param_cb_handle_ = param_subscriber_->add_parameter_callback(
+    "symmetry_axes",
+    std::bind(&FoundationPoseNode::UpdateSymmetryAxesCallback, this, std::placeholders::_1));
+
+  symmetry_planes_param_cb_handle_ = param_subscriber_->add_parameter_callback(
+    "symmetry_planes",
+    std::bind(&FoundationPoseNode::UpdateSymmetryPlanesCallback, this, std::placeholders::_1));
+
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosCameraInfo>();
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosImage>();
   registerSupportedType<nvidia::isaac_ros::nitros::NitrosDetection3DArray>();
@@ -325,26 +373,7 @@ void FoundationPoseNode::postLoadGraphCallback()
 
   // Set the mesh path from parameter
   getNitrosContext().setParameterStr(
-    "render", "nvidia::isaac_ros::FoundationposeRender", "mesh_file_path", mesh_file_path_);
-
-  getNitrosContext().setParameterStr(
-    "render_score", "nvidia::isaac_ros::FoundationposeRender", "mesh_file_path", mesh_file_path_);
-
-  getNitrosContext().setParameterStr(
-    "render", "nvidia::isaac_ros::FoundationposeRender", "texture_path", texture_path_);
-
-  getNitrosContext().setParameterStr(
-    "render_score", "nvidia::isaac_ros::FoundationposeRender", "texture_path", texture_path_);
-
-  getNitrosContext().setParameterStr(
-    "decoder", "nvidia::isaac_ros::FoundationposeDecoder", "mesh_file_path", mesh_file_path_);
-
-  getNitrosContext().setParameterStr(
-    "decoder", "nvidia::isaac_ros::FoundationposeDecoder", "mesh_file_path", mesh_file_path_);
-
-  getNitrosContext().setParameterStr(
-    "transform", "nvidia::isaac_ros::FoundationposeTransformation", "mesh_file_path",
-    mesh_file_path_);
+    "utils", "nvidia::isaac_ros::MeshStorage", "mesh_file_path", mesh_file_path_);
 
   // Set the depth threshold
   getNitrosContext().setParameterFloat32(
@@ -421,23 +450,135 @@ void FoundationPoseNode::postLoadGraphCallback()
     "score_inference", "nvidia::gxf::TensorRtInference", "output_binding_names",
     score_output_binding_names_);
 
+  getNitrosContext().setParameterBool(
+    "sync", "nvidia::isaac_ros::FoundationPoseSynchronization", "discard_old_messages",
+    discard_old_messages_
+  );
+  getNitrosContext().setParameterInt64(
+    "sync", "nvidia::isaac_ros::FoundationPoseSynchronization", "discard_time_ms",
+    discard_time_ms_
+  );
+  getNitrosContext().setParameterInt64(
+    "sync", "nvidia::isaac_ros::FoundationPoseSynchronization", "pose_estimation_timeout_ms",
+    pose_estimation_timeout_ms_
+  );
+  getNitrosContext().setParameterInt64(
+    "sync", "nvidia::isaac_ros::FoundationPoseSynchronization", "sync_threshold",
+    sync_threshold_
+  );
+
+  // Set symmetry planes for backward compatibility if any
   if (symmetry_planes_.size() > 0) {
     getNitrosContext().setParameter1DStrVector(
       "sampling", "nvidia::isaac_ros::FoundationposeSampling", "symmetry_planes",
       symmetry_planes_);
-
-    // Number of symmetry poses that could treat as the same pose
-    auto symmetry_poses = std::min(static_cast<int>(std::pow(2, symmetry_planes_.size())), 4);
-    int refine_max_batch_size = 252 / 6 / symmetry_poses;
-    getNitrosContext().setParameterInt32(
-      "refine_inference", "nvidia::gxf::TensorRtInference", "max_batch_size",
-      refine_max_batch_size);
-
-    int score_max_batch_size = refine_max_batch_size * 6;
-    getNitrosContext().setParameterInt32(
-      "score_inference", "nvidia::gxf::TensorRtInference", "max_batch_size",
-      score_max_batch_size);
   }
+
+  if (symmetry_axes_.size() > 0) {
+    getNitrosContext().setParameter1DStrVector(
+      "sampling", "nvidia::isaac_ros::FoundationposeSampling", "symmetry_axes",
+      symmetry_axes_);
+  }
+
+  // Set fixed axis angle constraints if any
+  if (fixed_axis_angles_.size() > 0) {
+    getNitrosContext().setParameter1DStrVector(
+      "sampling", "nvidia::isaac_ros::FoundationposeSampling", "fixed_axis_angles",
+      fixed_axis_angles_);
+  }
+
+  // Set the fixed translations parameter
+  if (fixed_translations_.size() > 0) {
+    getNitrosContext().setParameter1DStrVector(
+      "sampling", "nvidia::isaac_ros::FoundationposeSampling", "fixed_translations",
+      fixed_translations_);
+  }
+
+  // Set debug mode
+  getNitrosContext().setParameterBool(
+    "render", "nvidia::isaac_ros::FoundationposeRender", "debug",
+    debug_);
+  getNitrosContext().setParameterBool(
+    "render_score", "nvidia::isaac_ros::FoundationposeRender", "debug",
+    debug_);
+  getNitrosContext().setParameterStr(
+    "render", "nvidia::isaac_ros::FoundationposeRender", "debug_dir",
+    debug_dir_);
+  getNitrosContext().setParameterStr(
+    "render_score", "nvidia::isaac_ros::FoundationposeRender", "debug_dir",
+    debug_dir_);
+}
+
+void FoundationPoseNode::UpdateTfFrameNameCallback(const rclcpp::Parameter & tf_frame_name)
+{
+  std::unique_lock<std::mutex> lock(mutex_);
+  tf_frame_name_ = tf_frame_name.as_string();
+  RCLCPP_INFO(
+    get_logger(),
+    "[FoundationPoseNode] Changing tf frame name to %s",
+    tf_frame_name_.c_str());
+}
+
+void FoundationPoseNode::UpdateMeshFilePathCallback(const rclcpp::Parameter & mesh_file_path)
+{
+  mesh_file_path_ = mesh_file_path.as_string();
+  RCLCPP_INFO(
+    get_logger(),
+    "[FoundationPoseNode] Changing mesh file path to %s",
+    mesh_file_path_.c_str());
+
+  getNitrosContext().setParameterStr(
+    "utils", "nvidia::isaac_ros::MeshStorage", "mesh_file_path", mesh_file_path_);
+}
+
+void FoundationPoseNode::UpdateFixedTranslationsCallback(const rclcpp::Parameter & param)
+{
+  fixed_translations_ = param.as_string_array();
+  RCLCPP_INFO(
+    get_logger(),
+    "[FoundationPoseNode] Changing fixed_translations to %s",
+    StringListToString(fixed_translations_).c_str());
+
+  getNitrosContext().setParameter1DStrVector(
+    "sampling", "nvidia::isaac_ros::FoundationposeSampling", "fixed_translations",
+    fixed_translations_);
+}
+
+void FoundationPoseNode::UpdateFixedAxisAnglesCallback(const rclcpp::Parameter & param)
+{
+  fixed_axis_angles_ = param.as_string_array();
+  RCLCPP_INFO(
+    get_logger(),
+    "[FoundationPoseNode] Changing fixed_axis_angles to %s",
+    StringListToString(fixed_axis_angles_).c_str());
+
+  getNitrosContext().setParameter1DStrVector(
+    "sampling", "nvidia::isaac_ros::FoundationposeSampling", "fixed_axis_angles",
+    fixed_axis_angles_);
+}
+
+void FoundationPoseNode::UpdateSymmetryAxesCallback(const rclcpp::Parameter & param)
+{
+  symmetry_axes_ = param.as_string_array();
+  RCLCPP_INFO(
+    get_logger(),
+    "[FoundationPoseNode] Changing symmetry_axes to %s",
+    StringListToString(symmetry_axes_).c_str());
+
+  getNitrosContext().setParameter1DStrVector(
+    "sampling", "nvidia::isaac_ros::FoundationposeSampling", "symmetry_axes", symmetry_axes_);
+}
+
+void FoundationPoseNode::UpdateSymmetryPlanesCallback(const rclcpp::Parameter & param)
+{
+  symmetry_planes_ = param.as_string_array();
+  RCLCPP_INFO(
+    get_logger(),
+    "[FoundationPoseNode] Changing symmetry_planes to %s",
+    StringListToString(symmetry_planes_).c_str());
+
+  getNitrosContext().setParameter1DStrVector(
+    "sampling", "nvidia::isaac_ros::FoundationposeSampling", "symmetry_planes", symmetry_planes_);
 }
 
 void FoundationPoseNode::FoundationPoseDetectionCallback(
@@ -479,6 +620,8 @@ void FoundationPoseNode::FoundationPoseDetectionCallback(
   size_t tags_count = foundation_pose_detections_array.count;
 
   if (tags_count > 0) {
+    std::unique_lock<std::mutex> lock(mutex_);
+
     // struct is defined in fiducial_message.hpp
     auto pose = foundation_pose_detections_array.poses.at(0).value();
 

@@ -29,6 +29,8 @@
 #include "gxf/std/receiver.hpp"
 #include "gxf/std/transmitter.hpp"
 
+#include "mesh_storage.hpp"
+
 namespace nvidia {
 namespace isaac_ros {
 
@@ -49,13 +51,12 @@ class FoundationposeTransformation : public gxf::Codelet {
   gxf::Parameter<gxf::Handle<gxf::Transmitter>> batched_pose_array_transmitter_;
   gxf::Parameter<gxf::Handle<gxf::Allocator>> allocator_;
   gxf::Parameter<gxf::Handle<gxf::CudaStreamPool>> cuda_stream_pool_;
-  gxf::Parameter<std::string> mesh_file_path_;
+  gxf::Parameter<gxf::Handle<MeshStorage>> mesh_storage_;
   gxf::Parameter<float> rot_normalizer_;
   gxf::Parameter<std::string> mode_;
   gxf::Parameter<int> refine_iterations_;
   gxf::Handle<gxf::CudaStream> cuda_stream_handle_;
 
-  float mesh_diameter_;
   int32_t received_batches_ = 0;
   int32_t iteration_count_ = 0;
   std::vector<float> batched_refined_pose_;

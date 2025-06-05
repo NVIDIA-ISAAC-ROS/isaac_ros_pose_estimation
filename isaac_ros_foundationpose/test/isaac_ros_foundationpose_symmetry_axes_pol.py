@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,9 +42,9 @@ from vision_msgs.msg import Detection3DArray
 MESH_FILE_NAME = 'textured_simple.obj'
 
 REFINE_MODEL_NAME = 'dummy_refine_model.onnx'
-REFINE_ENGINE_NAME = 'dummy_refine_trt_engine.plan'
+REFINE_ENGINE_NAME = 'refine_trt_engine.plan'
 SCORE_MODEL_NAME = 'dummy_score_model.onnx'
-SCORE_ENGINE_NAME = 'dummy_score_trt_engine.plan'
+SCORE_ENGINE_NAME = 'score_trt_engine.plan'
 
 REFINE_ENGINE_PATH = '/tmp/' + REFINE_ENGINE_NAME
 SCORE_ENGINE_PATH = '/tmp/' + SCORE_ENGINE_NAME
@@ -57,15 +57,6 @@ DELTA = 0.05
 @pytest.mark.rostest
 def generate_test_description():
 
-    selector_node = ComposableNode(
-        name='foundationpose',
-        package='isaac_ros_foundationpose',
-        plugin='nvidia::isaac_ros::foundationpose::Selector',
-        namespace=IsaacROSFoundationPosePOLTest.generate_namespace(),
-        parameters=[{
-            'reset_period': 5000
-        }])
-
     foundationpose_node = ComposableNode(
         name='foundationpose',
         package='isaac_ros_foundationpose',
@@ -74,6 +65,8 @@ def generate_test_description():
         parameters=[{
             'mesh_file_path': os.path.dirname(__file__) +
                 '/test_cases/foundationpose/' + MESH_FILE_NAME,
+            'refine_iterations': 1,
+            'symmetry_axes': ['x_180', 'y_30', 'z_60'],
 
             'refine_model_file_path':  os.path.dirname(__file__) +
                 '/../../test/models/' + REFINE_MODEL_NAME,
@@ -92,31 +85,12 @@ def generate_test_description():
             'score_output_binding_names': ['output1'],
         }])
 
-    foundationpose_tracking_node = ComposableNode(
-        name='foundationpose',
-        package='isaac_ros_foundationpose',
-        plugin='nvidia::isaac_ros::foundationpose::FoundationPoseTrackingNode',
-        namespace=IsaacROSFoundationPosePOLTest.generate_namespace(),
-        parameters=[{
-            'mesh_file_path': os.path.dirname(__file__) +
-                '/test_cases/foundationpose/' + MESH_FILE_NAME,
-
-            'refine_model_file_path':  os.path.dirname(__file__) +
-                '/../../test/models/' + REFINE_MODEL_NAME,
-            'refine_engine_file_path': '/tmp/' + REFINE_ENGINE_NAME,
-            'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
-            'refine_input_binding_names': ['input1', 'input2'],
-            'refine_output_tensor_names': ['output_tensor1', 'output_tensor2'],
-            'refine_output_binding_names': ['output1', 'output2'],
-        }])
-
     container = ComposableNodeContainer(
         name='foundationpose_container',
         namespace='',
         package='rclcpp_components',
         executable='component_container_mt',
-        composable_node_descriptions=[selector_node, foundationpose_node,
-                                      foundationpose_tracking_node],
+        composable_node_descriptions=[foundationpose_node],
         output='screen',
     )
 
@@ -132,10 +106,7 @@ class IsaacROSFoundationPosePOLTest(IsaacROSBaseTest):
             f'Generating model (timeout={MODEL_GENERATION_TIMEOUT_SEC}s)')
         start_time = time.time()
         wait_cycles = 1
-        while (
-            not os.path.isfile(SCORE_ENGINE_PATH) or
-            not os.path.isfile(REFINE_ENGINE_PATH)
-        ):
+        while not os.path.isfile(SCORE_ENGINE_PATH) or not os.path.isfile(REFINE_ENGINE_PATH):
             time_diff = time.time() - start_time
             if time_diff > MODEL_GENERATION_TIMEOUT_SEC:
                 self.fail('Model generation timed out')
@@ -150,29 +121,29 @@ class IsaacROSFoundationPosePOLTest(IsaacROSBaseTest):
 
         received_messages = {}
 
-        self.generate_namespace_lookup(['depth_image', 'camera_info',
-                                        'image', 'segmentation',
-                                        'tracking/output'])
+        self.generate_namespace_lookup(['pose_estimation/depth_image',
+                                        'pose_estimation/image',
+                                        'pose_estimation/camera_info',
+                                        'pose_estimation/segmentation',
+                                        'pose_estimation/output'])
 
         subs = self.create_logging_subscribers(
-            [('tracking/output', Detection3DArray)], received_messages)
+            [('pose_estimation/output', Detection3DArray)], received_messages)
 
         depth_pub = self.node.create_publisher(
-            Image, self.namespaces['depth_image'], self.DEFAULT_QOS
+            Image, self.namespaces['pose_estimation/depth_image'], self.DEFAULT_QOS
         )
         rgb_image_pub = self.node.create_publisher(
-            Image, self.namespaces['image'], self.DEFAULT_QOS
+            Image, self.namespaces['pose_estimation/image'], self.DEFAULT_QOS
         )
         mask_pub = self.node.create_publisher(
-            Image, self.namespaces['segmentation'], self.DEFAULT_QOS
+            Image, self.namespaces['pose_estimation/segmentation'], self.DEFAULT_QOS
         )
         cam_info_pub = self.node.create_publisher(
-            CameraInfo, self.namespaces['camera_info'], self.DEFAULT_QOS
+            CameraInfo, self.namespaces['pose_estimation/camera_info'], self.DEFAULT_QOS
         )
 
         try:
-
-            time_now_msg = self.node.get_clock().now().to_msg()
             depth_path = str(test_folder) + '/mustard_depth.png'
             mask = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
 
@@ -199,20 +170,21 @@ class IsaacROSFoundationPosePOLTest(IsaacROSBaseTest):
             end_time = time.time() + TIMEOUT
             done = False
 
-            depth_image.header.stamp = time_now_msg
-            rgb_image.header.stamp = time_now_msg
-            mask.header.stamp = time_now_msg
-            camera_info.header.stamp = time_now_msg
-            rgb_image.header.frame_id = 'tf_camera'
-            camera_info.header.frame_id = 'tf_camera'
-
             while time.time() < end_time:
+                time_now_msg = self.node.get_clock().now().to_msg()
+                depth_image.header.stamp = time_now_msg
+                rgb_image.header.stamp = time_now_msg
+                mask.header.stamp = time_now_msg
+                camera_info.header.stamp = time_now_msg
+                rgb_image.header.frame_id = 'tf_camera'
+                camera_info.header.frame_id = 'tf_camera'
+
                 rgb_image_pub.publish(rgb_image)
                 depth_pub.publish(depth_image)
                 mask_pub.publish(mask)
                 cam_info_pub.publish(camera_info)
-                rclpy.spin_once(self.node, timeout_sec=(1))
-                if 'tracking/output' in received_messages:
+                rclpy.spin_once(self.node, timeout_sec=(10))
+                if 'pose_estimation/output' in received_messages:
                     done = True
                     break
 

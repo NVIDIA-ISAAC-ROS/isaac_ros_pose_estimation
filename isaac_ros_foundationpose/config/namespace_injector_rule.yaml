@@ -23,12 +23,10 @@ body:
     - type: nvidia::gxf::TensorRtInference
       path_parameter_keys: [cuda_stream_pool, clock]
     - type: nvidia::isaac_ros::FoundationposeSampling
-      path_parameter_keys: [cuda_stream_pool]
+      path_parameter_keys: [cuda_stream_pool, mesh_storage]
     - type: nvidia::isaac_ros::FoundationposeRender
-      path_parameter_keys: [cuda_stream_pool]
+      path_parameter_keys: [cuda_stream_pool, mesh_storage]
     - type: nvidia::isaac_ros::FoundationposeTransformation
-      path_parameter_keys: [cuda_stream_pool]
+      path_parameter_keys: [cuda_stream_pool, mesh_storage]
     - type: nvidia::isaac_ros::FoundationposeDecoder
-      path_parameter_keys: [cuda_stream_pool]
-    - type: nvidia::isaac_ros::RenderReceptiveSchedulingTerm
-      path_parameter_keys: [render_impl]
+      path_parameter_keys: [cuda_stream_pool, mesh_storage]

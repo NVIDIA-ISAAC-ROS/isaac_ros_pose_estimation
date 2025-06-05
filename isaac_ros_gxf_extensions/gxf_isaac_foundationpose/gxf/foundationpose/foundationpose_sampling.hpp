@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,7 +33,8 @@
 #include "gxf/std/transmitter.hpp"
 
 #include "foundationpose_sampling.cu.hpp"
-
+#include "foundationpose_utils.hpp"
+#include "mesh_storage.hpp"
 
 namespace nvidia {
 namespace isaac_ros {
@@ -60,12 +61,18 @@ class FoundationposeSampling : public gxf::Codelet {
   gxf::Parameter<gxf::Handle<gxf::CudaStreamPool>> cuda_stream_pool_;
   gxf::Parameter<uint32_t> max_hypothesis_;
   gxf::Parameter<float> min_depth_;
+  gxf::Parameter<std::vector<std::string>> symmetry_axes_;
   gxf::Parameter<std::vector<std::string>> symmetry_planes_;
-  gxf::Handle<gxf::CudaStream> stream_;
+  gxf::Parameter<std::vector<std::string>> fixed_axis_angles_;
+  gxf::Parameter<std::vector<std::string>> fixed_translations_;
+  gxf::Handle<gxf::CudaStream> cuda_stream_handle_;
+  gxf::Parameter<gxf::Handle<MeshStorage>> mesh_storage_;
 
   float* erode_depth_device_;
   float* bilateral_filter_depth_device_;
   bool cached_ = false;
+
+  cudaStream_t cuda_stream_ = 0;
 };
 
 }  // namespace isaac_ros
