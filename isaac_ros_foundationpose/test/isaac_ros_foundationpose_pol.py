@@ -40,7 +40,6 @@ from vision_msgs.msg import Detection3DArray
 
 
 MESH_FILE_NAME = 'textured_simple.obj'
-TEXTURE_MAP_NAME = 'texture_map.png'
 
 REFINE_MODEL_NAME = 'dummy_refine_model.onnx'
 REFINE_ENGINE_NAME = 'dummy_refine_trt_engine.plan'
@@ -66,8 +65,6 @@ def generate_test_description():
         parameters=[{
             'mesh_file_path': os.path.dirname(__file__) +
                 '/test_cases/foundationpose/' + MESH_FILE_NAME,
-            'texture_path': os.path.dirname(__file__) +
-                '/test_cases/foundationpose/' + TEXTURE_MAP_NAME,
             'refine_iterations': 1,
 
             'refine_model_file_path':  os.path.dirname(__file__) +
@@ -146,8 +143,6 @@ class IsaacROSFoundationPosePOLTest(IsaacROSBaseTest):
         )
 
         try:
-
-            time_now_msg = self.node.get_clock().now().to_msg()
             depth_path = str(test_folder) + '/mustard_depth.png'
             mask = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
 
@@ -174,14 +169,15 @@ class IsaacROSFoundationPosePOLTest(IsaacROSBaseTest):
             end_time = time.time() + TIMEOUT
             done = False
 
-            depth_image.header.stamp = time_now_msg
-            rgb_image.header.stamp = time_now_msg
-            mask.header.stamp = time_now_msg
-            camera_info.header.stamp = time_now_msg
-            rgb_image.header.frame_id = 'tf_camera'
-            camera_info.header.frame_id = 'tf_camera'
-
             while time.time() < end_time:
+                time_now_msg = self.node.get_clock().now().to_msg()
+                depth_image.header.stamp = time_now_msg
+                rgb_image.header.stamp = time_now_msg
+                mask.header.stamp = time_now_msg
+                camera_info.header.stamp = time_now_msg
+                rgb_image.header.frame_id = 'tf_camera'
+                camera_info.header.frame_id = 'tf_camera'
+
                 rgb_image_pub.publish(rgb_image)
                 depth_pub.publish(depth_image)
                 mask_pub.publish(mask)

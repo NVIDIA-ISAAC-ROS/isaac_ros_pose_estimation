@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,17 +16,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "foundationpose_sampling.hpp"
-#include "foundationpose_utils.hpp"
-
-#include <Eigen/Dense>
-
-#include <cuda_runtime.h>
 
 #include <iomanip>
 #include <iostream>
 #include <random>
 #include <string>
 
+#include <Eigen/Dense>
+#include <cuda_runtime.h>
+
+#include "foundationpose_utils.hpp"
 #include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
 #include "gxf/std/tensor.hpp"
@@ -42,6 +41,7 @@ constexpr char kNamePoints[] = "points";
 constexpr char RAW_CAMERA_MODEL_GXF_NAME[] = "intrinsics";
 constexpr size_t kPoseMatrixLength = 4;
 constexpr int kNumBatches = 6;
+constexpr int kAngleStep = 30;
 
 typedef Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> RowMajorMatrix8u;
 
@@ -153,23 +153,59 @@ float RotationGeodesticDistance(const Eigen::Matrix3f& R1, const Eigen::Matrix3f
   return std::acos(cos);
 }
 
-std::vector<Eigen::Matrix4f> GenerateSymmetricPoses(const std::vector<std::string>& symmetry_planes) {    
-  float theta = 180.0 / 180.0 * M_PI;
+std::vector<Eigen::Matrix4f> GenerateSymmetricPoses(const std::vector<std::string>& symmetry_axes) {    
   std::vector<float> x_angles = {0.0};
   std::vector<float> y_angles = {0.0};
   std::vector<float> z_angles = {0.0};
   std::vector<Eigen::Matrix4f> symmetry_poses;
 
-  for (int i = 0; i < symmetry_planes.size(); ++i) {
-    if (symmetry_planes[i] == "x"){
-      x_angles.push_back(theta);
-    } else if (symmetry_planes[i] == "y") {
-      y_angles.push_back(theta);
-    } else if (symmetry_planes[i] == "z") {
-      z_angles.push_back(theta);
+  if (symmetry_axes.empty()) {return symmetry_poses;}
+
+  for (int i = 0; i < symmetry_axes.size(); ++i) {
+    if (symmetry_axes[i].empty()) {
+      continue;
+    }
+
+    std::string axis;
+    std::string angle_str;
+    std::vector<float> angle_degrees;
+
+    // Parse format "axis_angle" (e.g., "x_30" or "x_full")
+    size_t underscore_pos = symmetry_axes[i].find('_');
+    if (underscore_pos == std::string::npos) {
+      GXF_LOG_ERROR("[FoundationposeSampling] Invalid symmetry axis format %s. Expected 'axis_angle' (e.g., 'x_30' or 'x_full')", 
+                    symmetry_axes[i].c_str());
+      continue;
+    }
+
+    axis = symmetry_axes[i].substr(0, underscore_pos);
+    angle_str = symmetry_axes[i].substr(underscore_pos + 1);
+
+    if (angle_str == "full") {
+      for (int angle = 0; angle < 360; angle += kAngleStep) {
+        angle_degrees.push_back(angle / 180.0 * M_PI);
+      }
     } else {
-    GXF_LOG_ERROR("[FoundationposeSampling] the input symmetry plane %s is invalid, ignore.", symmetry_planes[i]);
-    continue;
+      try {
+        float angle = std::stof(angle_str);
+        angle_degrees.push_back(angle / 180.0 * M_PI);
+      } catch (const std::exception& e) {
+        GXF_LOG_ERROR("[FoundationposeSampling] Failed to parse angle from %s. Expected a number or 'full'", 
+                      symmetry_axes[i].c_str());
+        continue;
+      }
+    }
+  
+    if (axis == "x"){
+      x_angles.insert(x_angles.end(), angle_degrees.begin(), angle_degrees.end());
+    } else if (axis == "y") {
+      y_angles.insert(y_angles.end(), angle_degrees.begin(), angle_degrees.end());
+    } else if (axis == "z") {
+      z_angles.insert(z_angles.end(), angle_degrees.begin(), angle_degrees.end());
+    } else {
+      GXF_LOG_ERROR("[FoundationposeSampling] Invalid symmetry axis %s. Expected x, y, or z", 
+                    symmetry_axes[i].c_str());
+      continue;
     }
   }
 
@@ -232,6 +268,155 @@ std::vector<Eigen::Matrix4f> ClusterPoses(
   return std::move(poses_out);
 }
 
+
+// Filters poses to meet specified axis-angle constraints (format: "axis_angle" e.g., "x_30").
+// Creates combinations of fixed angles while preserving original values for unconstrained axes.
+std::vector<Eigen::Matrix4f> FilterPosesByConstraints(
+    const std::vector<Eigen::Matrix4f>& poses_in, 
+    const std::vector<std::string>& fixed_axis_angles) {
+  
+  if (fixed_axis_angles.empty()) {return poses_in;} // No constraints, return all poses
+
+  // Parse constraints - collect all constraints for each axis
+  std::vector<float> x_angles;
+  std::vector<float> y_angles;
+  std::vector<float> z_angles;
+
+  for (const auto& angle_constraint : fixed_axis_angles) {
+    if (angle_constraint.empty()) {
+      continue;
+    }
+
+    std::string axis;
+    float angle_degrees = 0.0f;
+  
+    // Parse format "axis_angle" (e.g., "x_30")
+    size_t underscore_pos = angle_constraint.find('_');
+    if (underscore_pos != std::string::npos) {
+      axis = angle_constraint.substr(0, underscore_pos);
+      std::string angle_str = angle_constraint.substr(underscore_pos + 1);
+      try {
+        angle_degrees = std::stof(angle_str);
+      } catch (const std::exception& e) {
+        GXF_LOG_ERROR("[FoundationposeSampling] Failed to parse angle from %s, skipping constraint", 
+                     angle_constraint.c_str());
+        continue;
+      }
+    } else {
+      GXF_LOG_ERROR("[FoundationposeSampling] Invalid constraint format %s, expected axis_angle", 
+                   angle_constraint.c_str());
+      continue;
+    }
+  
+    float angle_radians = angle_degrees * M_PI / 180.0f;
+  
+    if (axis == "x") {
+      x_angles.push_back(angle_radians);
+    } else if (axis == "y") {
+      y_angles.push_back(angle_radians);
+    } else if (axis == "z") {
+      z_angles.push_back(angle_radians);
+    } else {
+      GXF_LOG_ERROR("[FoundationposeSampling] Invalid axis %s in constraint %s, expected x, y, or z", 
+                   axis.c_str(), angle_constraint.c_str());
+    }
+  }
+
+  // Check if any axis has constraints
+  if (x_angles.empty() && y_angles.empty() && z_angles.empty()) {
+    GXF_LOG_INFO("[FoundationposeSampling] No valid constraints provided");
+    return poses_in;
+  }
+
+  // Create combinations of fixed angles (if any)
+  std::vector<Eigen::Vector3f> fixed_angle_combinations;
+
+  // Use NaN to represent unfixed angles
+  float nan_value = std::numeric_limits<float>::quiet_NaN();
+
+  // For each axis, either use the fixed values or a placeholder NaN
+  std::vector<float> x_values = x_angles.empty() ? std::vector<float>{nan_value} : x_angles;
+  std::vector<float> y_values = y_angles.empty() ? std::vector<float>{nan_value} : y_angles;
+  std::vector<float> z_values = z_angles.empty() ? std::vector<float>{nan_value} : z_angles;
+
+  // Generate all combinations of fixed angle values
+  for (float x : x_values) {
+    for (float y : y_values) {
+      for (float z : z_values) {
+        fixed_angle_combinations.push_back(Eigen::Vector3f(x, y, z));
+        if (!std::isnan(x) || !std::isnan(y) || !std::isnan(z)) {
+          GXF_LOG_DEBUG("[FoundationposeSampling] Fixed angle combination: X=%s Y=%s Z=%s", 
+                      std::isnan(x) ? "unfixed" : std::to_string(x * 180.0 / M_PI).c_str(),
+                      std::isnan(y) ? "unfixed" : std::to_string(y * 180.0 / M_PI).c_str(),
+                      std::isnan(z) ? "unfixed" : std::to_string(z * 180.0 / M_PI).c_str());
+        }
+      }
+    }
+  }
+
+  GXF_LOG_INFO("[FoundationposeSampling] Generated %lu fixed angle combinations", fixed_angle_combinations.size());
+
+  // Map to store unique poses (indexed by rotation matrix as a string)
+  std::map<std::string, Eigen::Matrix4f> unique_poses;
+
+  // For each input pose and each fixed angle combination, create a new pose
+  for (const auto& pose : poses_in) {
+    // Extract original rotation and Euler angles
+    Eigen::Matrix3f orig_rotation = pose.block<3, 3>(0, 0);
+    Eigen::Vector3f orig_euler = orig_rotation.eulerAngles(0, 1, 2);
+
+    for (const auto& fixed_angles : fixed_angle_combinations) {
+      Eigen::Vector3f new_euler = orig_euler;
+      if (!std::isnan(fixed_angles[0])) new_euler[0] = fixed_angles[0];
+      if (!std::isnan(fixed_angles[1])) new_euler[1] = fixed_angles[1];
+      if (!std::isnan(fixed_angles[2])) new_euler[2] = fixed_angles[2];
+
+      Eigen::AngleAxisf rotX(new_euler[0], Eigen::Vector3f::UnitX());
+      Eigen::AngleAxisf rotY(new_euler[1], Eigen::Vector3f::UnitY());
+      Eigen::AngleAxisf rotZ(new_euler[2], Eigen::Vector3f::UnitZ());
+
+      // Combine rotations (Z * Y * X order)
+      Eigen::Matrix3f new_rotation = rotZ.toRotationMatrix() * 
+                                     rotY.toRotationMatrix() * 
+                                     rotX.toRotationMatrix();
+
+      Eigen::Matrix4f new_pose = Eigen::Matrix4f::Identity();
+      new_pose.block<3, 3>(0, 0) = new_rotation;
+      new_pose.block<3, 1>(0, 3) = pose.block<3, 1>(0, 3);
+
+      // Extract Euler angles from the new rotation matrix for the key
+      Eigen::Vector3f key_angles = new_rotation.eulerAngles(0, 1, 2);
+
+      int x_key = static_cast<int>(std::round(key_angles[0] * 180.0 / M_PI)) % 360;
+      int y_key = static_cast<int>(std::round(key_angles[1] * 180.0 / M_PI)) % 360;
+      int z_key = static_cast<int>(std::round(key_angles[2] * 180.0 / M_PI)) % 360;
+
+      if (x_key < 0) x_key += 360;
+      if (y_key < 0) y_key += 360;
+      if (z_key < 0) z_key += 360;
+
+      std::string angle_key = std::to_string(x_key) + "_" + 
+                              std::to_string(y_key) + "_" + 
+                              std::to_string(z_key);
+
+      // Store the pose if not a duplicate
+      if (unique_poses.find(angle_key) == unique_poses.end()) {
+        unique_poses[angle_key] = new_pose;
+      }
+    }
+  }
+
+  // Convert unique poses map to output vector
+  std::vector<Eigen::Matrix4f> poses_out;
+  for (const auto& [key, pose] : unique_poses) {
+    poses_out.push_back(pose);
+  }
+  // Log output size and example poses
+  GXF_LOG_INFO("[FoundationposeSampling] Generated %lu unique poses after applying constraints", poses_out.size());
+
+  return poses_out;
+}
+
 std::vector<Eigen::Matrix4f> SampleViewsIcosphere(unsigned int n_views) {
   auto vertices = GenerateIcosphere(n_views);
   std::vector<Eigen::Matrix4f, std::allocator<Eigen::Matrix4f>> cam_in_obs(
@@ -256,8 +441,12 @@ std::vector<Eigen::Matrix4f> SampleViewsIcosphere(unsigned int n_views) {
   return std::move(cam_in_obs);
 }
 
-std::vector<Eigen::Matrix4f> MakeRotationGrid(const std::vector<std::string>& symmetry_planes, unsigned int n_views = 40, int inplane_step = 60) {
+std::vector<Eigen::Matrix4f> MakeRotationGrid(const std::vector<std::string>& symmetry_axes, 
+                                             const std::vector<std::string>& fixed_axis_angles, 
+                                             unsigned int n_views = 40, 
+                                             int inplane_step = 60) {
   auto cam_in_obs = SampleViewsIcosphere(n_views);
+  GXF_LOG_DEBUG("[FoundationposeSampling] %lu poses generated from icosphere", cam_in_obs.size());
 
   std::vector<Eigen::Matrix4f> rot_grid;
   for (unsigned int i = 0; i < cam_in_obs.size(); i++) {
@@ -274,10 +463,15 @@ std::vector<Eigen::Matrix4f> MakeRotationGrid(const std::vector<std::string>& sy
     }
   }
 
-  std::vector<Eigen::Matrix4f> symmetry_tfs = GenerateSymmetricPoses(symmetry_planes);
+  // Filter poses based on fixed axis angle constraints
+  auto filtered_poses = FilterPosesByConstraints(rot_grid, fixed_axis_angles);
+  GXF_LOG_DEBUG("[FoundationposeSampling] %lu poses left after applying fixed axis angle constraints", filtered_poses.size());
+
+  std::vector<Eigen::Matrix4f> symmetry_tfs = GenerateSymmetricPoses(symmetry_axes);
   symmetry_tfs.push_back(Eigen::Matrix4f::Identity());
-  auto clustered_poses = ClusterPoses(30.0, 99999.0, rot_grid, symmetry_tfs);
+  auto clustered_poses = ClusterPoses(kAngleStep, 99999.0, filtered_poses, symmetry_tfs);
   GXF_LOG_DEBUG("[FoundationposeSampling] %lu poses left after clustering", clustered_poses.size());
+  
   return std::move(clustered_poses);
 }
 
@@ -377,10 +571,35 @@ gxf_result_t FoundationposeSampling::registerInterface(gxf::Registrar* registrar
       min_depth_, "min_depth", "Minimum Depth",
       "Minimum depth value to consider for estimating object center in image space.",
       0.1f);
-  
+
   result &= registrar->parameter(
-    symmetry_planes_, "symmetry_planes", "Symmetry Planes",
-    "Symmetry planes, select one or more from [x, y, z]. ", std::vector<std::string>{});
+    symmetry_axes_, "symmetry_axes", "Symmetry Axes",
+    "Rotational symmetries around axes with angles in format 'axis_angle' (e.g., 'x_30' for 30 degrees around x-axis). "
+    "Valid axes are [x, y, z]. Angles must be explicitly specified (e.g., 'x_180') or use 'full' for full rotation.", 
+    std::vector<std::string>{}, GXF_PARAMETER_FLAGS_DYNAMIC);
+
+  result &= registrar->parameter(
+    symmetry_planes_, "symmetry_planes", "Symmetry Planes (Deprecated)",
+    "Deprecated: Use symmetry_axes instead. Adds 180-degree rotational symmetry around specified axes. "
+    "Format: 'axis' (e.g., 'x' for 180-degree rotation around x-axis). Valid axes are [x, y, z].", 
+    std::vector<std::string>{}, GXF_PARAMETER_FLAGS_DYNAMIC);
+
+  result &= registrar->parameter(
+    fixed_axis_angles_, "fixed_axis_angles", "Fixed Axis Angles",
+    "Constraints on rotation angles in format 'axis_angle' (e.g., 'x_30' for 30 degrees around x-axis). "
+    "Valid axes are [x, y, z]. Poses will be filtered to only include those matching these rotation constraints.", 
+    std::vector<std::string>{}, GXF_PARAMETER_FLAGS_DYNAMIC);
+
+  result &= registrar->parameter(
+    fixed_translations_, "fixed_translations", "Fixed Translations",
+    "Fixed translation components in format 'axis_value' (e.g., 'x_0.1', 'y_0.2', 'z_0.3'). "
+    "Valid axes are [x, y, z] for translation in x, y, z directions respectively. "
+    "If provided, these will override the automatically estimated translation components.",
+    std::vector<std::string>{}, GXF_PARAMETER_FLAGS_DYNAMIC);
+
+  result &= registrar->parameter(
+      mesh_storage_, "mesh_storage", "Mesh Storage",
+      "The mesh storage for mesh reuse");
 
   return gxf::ToResultCode(result);
 }
@@ -391,10 +610,13 @@ gxf_result_t FoundationposeSampling::start() noexcept {
   auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
   if (!maybe_stream) { return gxf::ToResultCode(maybe_stream); }
 
-  stream_ = std::move(maybe_stream.value());
-  if (!stream_->stream()) {
-    GXF_LOG_ERROR("[FoundationposeSampling] allocated stream is not initialized!");
+  cuda_stream_handle_ = std::move(maybe_stream.value());
+  if (!cuda_stream_handle_->stream()) {
+    GXF_LOG_ERROR("[FoundationposeSampling] Allocated stream is not initialized!");
     return GXF_FAILURE;
+  }
+  if (!cuda_stream_handle_.is_null()) {
+    cuda_stream_ = cuda_stream_handle_->stream().value();
   }
 
   return GXF_SUCCESS;
@@ -402,6 +624,20 @@ gxf_result_t FoundationposeSampling::start() noexcept {
 
 gxf_result_t FoundationposeSampling::tick() noexcept {
   GXF_LOG_DEBUG("[FoundationposeSampling] Tick FoundationPose FoundationposeSampling");
+
+  // Combine symmetry_axes with converted symmetry_planes for backward compatibility
+  std::vector<std::string> all_symmetry_axes = symmetry_axes_.get();
+  
+  // Convert symmetry_planes to symmetry_axes format (adding explicit 180-degree rotations)
+  for (const auto& plane : symmetry_planes_.get()) {
+    if (plane == "x" || plane == "y" || plane == "z") {
+      all_symmetry_axes.push_back(plane + "_180");  // Explicitly specify 180 degrees
+      GXF_LOG_WARNING("[FoundationposeSampling] Using deprecated symmetry_planes parameter. "
+                      "Please use symmetry_axes instead (e.g., '%s_180').", plane.c_str());
+    } else {
+      GXF_LOG_ERROR("[FoundationposeSampling] Invalid symmetry plane axis %s, ignoring.", plane.c_str());
+    }
+  }
 
   auto maybe_xyz_message = point_cloud_receiver_->receive();
   if (!maybe_xyz_message) {
@@ -439,10 +675,8 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
     return maybe_segmentation_image.error();
   }
 
-  cudaStream_t cuda_stream = 0;
-  if (!stream_.is_null()) {
-    cuda_stream = stream_->stream().value();
-  }
+  // Try to reload mesh if the path has changed
+  mesh_storage_.get()->TryReloadMesh();
 
   auto depth_handle = maybe_depth_image.value();
   auto depth_info = depth_handle->video_frame_info();
@@ -490,7 +724,7 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
   }
 
   // Generate Pose Hypothesis
-  auto ob_in_cams = MakeRotationGrid(symmetry_planes_.get());
+  auto ob_in_cams = MakeRotationGrid(all_symmetry_axes, fixed_axis_angles_.get());
   if (ob_in_cams.size() == 0 || ob_in_cams.size() > max_hypothesis_) {
     GXF_LOG_ERROR("[FoundationposeSampling] The size of rotation grid is not valid.");
     return GXF_FAILURE;
@@ -504,10 +738,10 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
   Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> bilateral_filter_depth_host;
   bilateral_filter_depth_host.resize(height, width);
 
-  erode_depth(cuda_stream, reinterpret_cast<float*>(depth_handle->pointer()), erode_depth_device_, height, width);
+  erode_depth(cuda_stream_, reinterpret_cast<float*>(depth_handle->pointer()), erode_depth_device_, height, width);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
-  bilateral_filter_depth(cuda_stream, erode_depth_device_, bilateral_filter_depth_device_, height, width);
+  bilateral_filter_depth(cuda_stream_, erode_depth_device_, bilateral_filter_depth_device_, height, width);
   CHECK_CUDA_ERRORS(cudaGetLastError());
 
   RowMajorMatrix8u mask;
@@ -515,19 +749,70 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
 
   CHECK_CUDA_ERRORS(cudaMemcpyAsync(
     bilateral_filter_depth_host.data(), bilateral_filter_depth_device_,
-    height * width * sizeof(float), cudaMemcpyDeviceToHost, cuda_stream));
+    height * width * sizeof(float), cudaMemcpyDeviceToHost, cuda_stream_));
 
   CHECK_CUDA_ERRORS(cudaMemcpyAsync(
     mask.data(), segmentation_handle->pointer(), height * width * sizeof(uint8_t),
-    cudaMemcpyDeviceToHost, cuda_stream));
-  cudaStreamSynchronize(cuda_stream);
+    cudaMemcpyDeviceToHost, cuda_stream_));
+  cudaStreamSynchronize(cuda_stream_);
 
   Eigen::Vector3f center;
+  
+  // Always estimate translation first
   auto success = GuessTranslation(bilateral_filter_depth_host, mask, K, min_depth_, center);
   if (!success) {
     GXF_LOG_INFO("[FoundationposeSampling] Failed to guess translation. Not processing this image");
     return GXF_SUCCESS;
   }
+  GXF_LOG_INFO("[FoundationposeSampling] Initial estimated translation: [x=%f, y=%f, z=%f]", 
+               center[0], center[1], center[2]);
+
+  // Override specific axes if fixed translations is provided
+  auto fixed_translations = fixed_translations_.get();
+  if (!fixed_translations.empty()) {
+    // Parse fixed translation components
+    for (const auto& component : fixed_translations) {
+      if (component.empty()) {
+        continue;
+      }
+
+      std::string axis;
+      float value;
+      
+      // Parse format "axis_value" (e.g., "x_0.1")
+      size_t underscore_pos = component.find('_');
+      if (underscore_pos == std::string::npos) {
+        GXF_LOG_ERROR("[FoundationposeSampling] Invalid fixed translations format '%s'. Expected 'axis_value' (e.g., 'x_0.1')", 
+                      component.c_str());
+        return GXF_FAILURE;
+      }
+
+      axis = component.substr(0, underscore_pos);
+      try {
+        value = std::stof(component.substr(underscore_pos + 1));
+      } catch (const std::exception& e) {
+        GXF_LOG_ERROR("[FoundationposeSampling] Failed to parse translation value from '%s'. Expected a number", 
+                      component.c_str());
+        return GXF_FAILURE;
+      }
+
+      // Override the appropriate component
+      if (axis == "x") {
+        center[0] = value;
+      } else if (axis == "y") {
+        center[1] = value;
+      } else if (axis == "z") {
+        center[2] = value;
+      } else {
+        GXF_LOG_ERROR("[FoundationposeSampling] Invalid translation axis '%s'. Expected x, y, or z", 
+                      axis.c_str());
+        return GXF_FAILURE;
+      }
+    }
+    GXF_LOG_INFO("[FoundationposeSampling] Final translation after applying fixed components: [x=%f, y=%f, z=%f]", 
+                 center[0], center[1], center[2]);
+  }
+
   for (auto& m : ob_in_cams) {
     m.block<3, 1>(0, 3) = center;
   }
@@ -540,9 +825,17 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
     ob_in_cams_vector.insert(ob_in_cams_vector.end(), mat_data.begin(), mat_data.end());
   }
 
-  if (ob_in_cams.size() % kNumBatches !=0 ) {
-    GXF_LOG_WARNING(
-      "[FoundationposeSampling] The total pose size is not divisible by the iteration number, a few pose estimations might be dropped");
+  // Add padding to the last batch to make the size divisible by kNumBatches
+  auto remainder = ob_in_cams.size() % kNumBatches;
+  auto padding_size = remainder == 0 ? 0 : kNumBatches - remainder;
+  
+  if (padding_size > 0) {
+    GXF_LOG_INFO(
+      "[FoundationposeSampling] Padding %d identity poses to make the size divisible by %d (current size: %lu)", 
+      padding_size, kNumBatches, ob_in_cams.size());
+    for (int i = 0; i < padding_size; i++) {
+      ob_in_cams.push_back(Eigen::Matrix4f::Identity());
+    }
   }
 
   int batch_size = ob_in_cams.size() / kNumBatches;
@@ -589,8 +882,8 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
     }
 
     CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-        pose_arrays->pointer(), &ob_in_cams_vector[i*batch_size*16], pose_arrays->size(), cudaMemcpyHostToDevice, cuda_stream));
-    cudaStreamSynchronize(cuda_stream);
+        pose_arrays->pointer(), &ob_in_cams_vector[i*batch_size*16], pose_arrays->size(), cudaMemcpyHostToDevice, cuda_stream_));
+    cudaStreamSynchronize(cuda_stream_);
 
     // Create entity, and forward camera model
     auto maybe_camera_model_out_message = gxf::Entity::New(context());

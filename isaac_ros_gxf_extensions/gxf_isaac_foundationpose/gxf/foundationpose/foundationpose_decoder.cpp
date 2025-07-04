@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "foundationpose_decoder.hpp"
-#include "foundationpose_decoder.cu.hpp"
-#include "foundationpose_utils.hpp"
 
 #include "detection3_d_array_message.hpp"
+#include "foundationpose_decoder.cu.hpp"
+#include "foundationpose_utils.hpp"
 #include "gxf/core/parameter_parser_std.hpp"
 #include "gxf/std/tensor.hpp"
 #include "gxf/std/timestamp.hpp"
@@ -34,41 +34,6 @@ constexpr size_t kPoseMatrixLength = 4;
 
 }  // namepsace
 
-gxf_result_t FoundationposeDecoder::ExtractBoundingBoxDimensions() {
-  // Load the obj mesh file to extrac bbox dimensions
-  Assimp::Importer importer;
-  const aiScene* scene = importer.ReadFile(
-      mesh_file_path_.get(),
-      aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType);
-
-  if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-    GXF_LOG_ERROR("[FoundationPoseDecoder] Error while loading mesh file ERROR::ASSIMP::");
-    GXF_LOG_ERROR(importer.GetErrorString());
-    return GXF_FAILURE;
-  }
-
-  if (scene->mNumMeshes == 0) {
-    GXF_LOG_ERROR("[FoundationPoseDecoder] No mesh was found in the mesh file");
-    return GXF_FAILURE;
-  }
-
-  const aiMesh* mesh = scene->mMeshes[0];
-
-  auto min_max_vertex = FindMinMaxVertex(mesh);
-  mesh_model_center_ = (min_max_vertex.second + min_max_vertex.first) / 2.0;
-  Eigen::Vector3f min_vertex = min_max_vertex.first;
-  Eigen::Vector3f max_vertex = min_max_vertex.second;
-
-  // Now you have the bounding box defined by the min and max coordinates
-  bbox_size_x_ = abs(max_vertex[0] - min_vertex[0]);
-  bbox_size_y_ = abs(max_vertex[1] - min_vertex[1]);
-  bbox_size_z_ = abs(max_vertex[2] - min_vertex[2]);
-
-  GXF_LOG_INFO(
-      "[FoundationposeDecoder] bbox_size_x_: %f \n bbox_size_y_: %f \n bbox_size_z_: %f)",
-      bbox_size_x_, bbox_size_y_, bbox_size_z_);
-  return GXF_SUCCESS;
-}
 
 gxf_result_t FoundationposeDecoder::registerInterface(gxf::Registrar* registrar) noexcept {
   gxf::Expected<void> result;
@@ -91,9 +56,6 @@ gxf_result_t FoundationposeDecoder::registerInterface(gxf::Registrar* registrar)
       "The ouput poses as a Detection 3D list");
 
   result &= registrar->parameter(
-      mesh_file_path_, "mesh_file_path", "obj mesh file path", "Path to your object mesh file");
-
-  result &= registrar->parameter(
       mode_, "mode", "Decoder Mode", "Tracking or Pose Estimation");
 
   result &= registrar->parameter(
@@ -102,6 +64,10 @@ gxf_result_t FoundationposeDecoder::registerInterface(gxf::Registrar* registrar)
   result &= registrar->parameter(
       cuda_stream_pool_, "cuda_stream_pool", "Cuda Stream Pool",
       "Instance of gxf::CudaStreamPool to allocate CUDA stream.");
+
+  result &= registrar->parameter(
+      mesh_storage_, "mesh_storage", "Mesh Storage",
+      "Component to reuse mesh");
   return gxf::ToResultCode(result);
 }
 
@@ -119,11 +85,27 @@ gxf_result_t FoundationposeDecoder::start() noexcept {
     cuda_stream_ = cuda_stream_handle_->stream().value();
   }
 
-  return ExtractBoundingBoxDimensions();
+  return GXF_SUCCESS;
 }
 
 gxf_result_t FoundationposeDecoder::tick() noexcept {
   GXF_LOG_DEBUG("[FoundationposeDecoder] Tick");
+
+  // Extract bounding box dimensions using GetMeshData
+  auto mesh_data_ptr = mesh_storage_.get()->GetMeshData();
+  if (!mesh_data_ptr) {
+    GXF_LOG_ERROR("[FoundationPoseDecoder] Failed to get mesh data");
+    return GXF_FAILURE;
+  }
+
+  // Calculate bounding box dimensions from stored values
+  const float bbox_size_x = abs(mesh_data_ptr->max_vertex[0] - mesh_data_ptr->min_vertex[0]);
+  const float bbox_size_y = abs(mesh_data_ptr->max_vertex[1] - mesh_data_ptr->min_vertex[1]);
+  const float bbox_size_z = abs(mesh_data_ptr->max_vertex[2] - mesh_data_ptr->min_vertex[2]);
+
+  GXF_LOG_INFO(
+      "[FoundationposeDecoder] bbox_size_x: %f \n bbox_size_y: %f \n bbox_size_z: %f)",
+      bbox_size_x, bbox_size_y, bbox_size_z);
 
   // Receive pose array data and score tensors
   const auto maybe_pose_array_message = pose_array_receiver_->receive();
@@ -164,11 +146,11 @@ gxf_result_t FoundationposeDecoder::tick() noexcept {
     }
     auto pose_scores_tensor = maybe_pose_scores_tensor.value();
 
-    // Ensure number of poses in pose array and pose scores are equal
-    if (pose_array_tensor->shape().dimension(0) != pose_scores_tensor->shape().dimension(1)) {
+    // The number of poses in pose array should be less than or equal to the number of pose scores
+    // as the pose scores are allocated with the max batch size
+    if (pose_array_tensor->shape().dimension(0) > pose_scores_tensor->shape().dimension(1)) {
       GXF_LOG_ERROR(
-        "[FoundationposeDecoder] Number of poses in pose array(%d) and pose scores(%d) are not "
-        "equal",
+        "[FoundationposeDecoder] Number of poses in pose array(%d) should be less than or equal to pose scores(%d)",
         pose_array_tensor->shape().dimension(0), pose_scores_tensor->shape().dimension(1));
       return GXF_FAILURE;
     }
@@ -190,7 +172,7 @@ gxf_result_t FoundationposeDecoder::tick() noexcept {
   
   // Add the distance from edge to the center because
   Eigen::Matrix4f tf_to_center = Eigen::Matrix4f::Identity();
-  tf_to_center.block<3, 1>(0, 3) = mesh_model_center_;
+  tf_to_center.block<3, 1>(0, 3) = mesh_data_ptr->mesh_model_center;
   pose_matrix = pose_matrix * tf_to_center;
   
 
@@ -261,7 +243,7 @@ gxf_result_t FoundationposeDecoder::tick() noexcept {
 
   **detection3_d_list.poses[0] = pose3d;
   **detection3_d_list.bbox_sizes[0] =
-      nvidia::isaac::Vector3f(bbox_size_x_, bbox_size_y_, bbox_size_z_);
+      nvidia::isaac::Vector3f(bbox_size_x, bbox_size_y, bbox_size_z);
 
   return gxf::ToResultCode(
       detection3_d_list_transmitter_->publish(std::move(detection3_d_list.entity)));

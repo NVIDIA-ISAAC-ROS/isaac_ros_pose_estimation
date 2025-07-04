@@ -20,6 +20,7 @@
 
 #include <string>
 #include <vector>
+
 #include <vision_msgs/msg/detection3_d_array.hpp>
 
 #include "isaac_ros_nitros/nitros_node.hpp"
@@ -59,7 +60,6 @@ private:
 
   // Path to the mesh files
   const std::string mesh_file_path_;
-  const std::string texture_path_;
 
   const float min_depth_;
   const float max_depth_;

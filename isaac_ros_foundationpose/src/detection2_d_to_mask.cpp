@@ -24,6 +24,8 @@
 #include <vision_msgs/msg/detection2_d.hpp>
 #include <vision_msgs/msg/detection2_d_array.hpp>
 
+#include "isaac_ros_common/qos.hpp"
+
 namespace nvidia
 {
 namespace isaac_ros
@@ -41,11 +43,13 @@ class Detection2DToMask : public rclcpp::Node
 public:
   explicit Detection2DToMask(const rclcpp::NodeOptions & options)
   : Node("detection2_d_to_mask", options),
+    input_qos_{::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "input_qos")},
+    output_qos_{::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos")},
     mask_width_(declare_parameter<int>("mask_width", 640)),
     mask_height_(declare_parameter<int>("mask_height", 480)),
-    image_pub_{create_publisher<sensor_msgs::msg::Image>("segmentation", 10)},
+    image_pub_{create_publisher<sensor_msgs::msg::Image>("segmentation", output_qos_)},
     detection2_d_sub_{create_subscription<vision_msgs::msg::Detection2D>(
-        "detection2_d", rclcpp::QoS(rclcpp::SensorDataQoS()),
+        "detection2_d", input_qos_,
         std::bind(&Detection2DToMask::boundingBoxCallback, this, std::placeholders::_1))}
   {
     RCLCPP_INFO(this->get_logger(), "Mask Height: %d, Mask Width: %d", mask_height_, mask_width_);
@@ -75,6 +79,10 @@ public:
   }
 
 private:
+  // QOS settings
+  rclcpp::QoS input_qos_;
+  rclcpp::QoS output_qos_;
+
   int mask_width_;
   int mask_height_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;

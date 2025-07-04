@@ -15,8 +15,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#include <iostream>
 #include "foundationpose_render.cu.hpp"
+
+#include <iostream>
 
 void RasterizeCudaFwdShaderKernel(const RasterizeCudaFwdShaderParams p);
 void InterpolateFwdKernel(const InterpolateKernelParams p);

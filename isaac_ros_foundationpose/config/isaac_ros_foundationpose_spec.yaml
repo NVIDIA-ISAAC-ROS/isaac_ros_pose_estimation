@@ -1,0 +1,195 @@
+%YAML 1.2
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+---
+id: [0xd43f23e4b9bf11eb, 0x9d182b7be630552b]
+name: TensorRTExtension
+version: 2.0.0
+components:
+  - id: [0x06a7f0e0b9c011eb, 0x8cd623c9c2070107]
+    type: nvidia::gxf::TensorRtInference
+    input_output_groups:
+      - input_keys: [dummy_rx]
+        output_keys: [tx]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_tensor_list_nchw]
+                output_formats: [nitros_tensor_list_nchw]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+              - input_formats: [nitros_tensor_list_nhwc]
+                output_formats: [nitros_tensor_list_nhwc]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+              - input_formats: [nitros_tensor_list_nchw_rgb_f32]
+                output_formats: [nitros_tensor_list_nhwc_rgb_f32]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+              - input_formats: [nitros_tensor_list_nchw_bgr_f32]
+                output_formats: [nitros_tensor_list_nhwc_bgr_f32]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+              - input_formats: [nitros_tensor_list_nchw_rgb_f32]
+                output_formats: [nitros_tensor_list_nchw_rgb_f32]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+---
+id: [0x5b942ff659bc4502, 0xa0b000b36b53f74f]
+name: FoundationPoseExtension
+version: 1.0.0
+components:
+  - id: [0x835babbb1c2caac7, 0x8eb3b7e37a08230c]
+    type: nvidia::isaac_ros::depth_image_proc::DepthToPointCloud
+    input_output_groups:
+      - input_keys: [depth_receiver]
+        output_keys: [point_cloud_transmitter]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_image_32FC1]
+                output_formats: [nitros_point_cloud]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+  - id: [0xa7cdaf12f3402b64, 0x9fb6c7e9a0de679a]
+    type: nvidia::isaac::CameraMessageCompositor
+    input_output_groups:
+      - input_keys: [video_buffer_input,camera_model_input]
+        output_keys: [camera_message_output]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_image_rgb8,nitros_camera_info]
+                output_formats: [nitros_image_rgb8]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+              - input_formats: [nitros_image_32FC1,nitros_camera_info]
+                output_formats: [nitros_image_32FC1]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+  - id: [0x52138759e5824999, 0x8d26bd90e602d335]
+    type: nvidia::isaac_ros::FoundationposeSampling
+    input_output_groups:
+      - input_keys: [depth_input, point_cloud_input, rgb_input, segmentation_input]
+        output_keys: [output, point_cloud_output, rgb_output]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_image_32FC1, nitros_point_cloud, nitros_image_rgb8, nitros_image_mono8]
+                output_formats: [nitros_tensor_list_nchw, nitros_point_cloud, nitros_image_rgb8]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+  - id: [0x52138759e5824998, 0x8d26bd90e603d335]
+    type: nvidia::isaac_ros::FoundationPoseSynchronization
+    input_output_groups:
+      - input_keys: [inputs]
+        output_keys: [outputs]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [any]
+                output_formats: [any]
+  - id: [0x63138759e5624879, 0x4a95bd90e602d324]
+    type: nvidia::isaac_ros::FoundationposeRender
+    input_output_groups:
+      - input_keys: [rgb_input, camera_model_input, pose_array_input, point_cloud_input]
+        output_keys: [output]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_image_rgb8, nitros_camera_info, nitros_tensor_list_nchw, nitros_point_cloud]
+                output_formats: [nitros_tensor_list_nchw]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+  - id: [0x97104bb7e89f2b2a, 0x9de6f7fd399a201d]
+    type: nvidia::isaac_ros::FoundationposeTransformation
+    input_output_groups:
+      - input_keys: [refined_poses_input, poses_input]
+        output_keys: [sliced_output, batched_output]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_tensor_list_nchw, nitros_tensor_list_nchw]
+                output_formats: [nitros_tensor_list_nchw, nitros_tensor_list_nchw]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+  - id: [0x97104bb7e89f2b2a, 0x9de6f7fd399a201d]
+    type: nvidia::isaac_ros::FoundationposeDecoder
+    input_output_groups:
+      - input_keys: [pose_array_input]
+        output_keys: [output, pose_matrix_output]
+        input_format_keys: []
+        output_format_keys: []
+        supported_formats:
+          - platforms: [any]
+            details:
+              - input_formats: [nitros_tensor_list_nchw]
+                output_formats: [nitros_detection3_d_array, nitros_tensor_list_nchw]
+                costs:
+                  throughput: 10bytes/s
+                  latency: 10ms
+                  power: 100J
+                  accuracy: 100%
+  - id: [0xf6bbcfd111984aeb, 0xb6dbf26d3125540f]
+    type: nvidia::isaac_ros::MeshStorage

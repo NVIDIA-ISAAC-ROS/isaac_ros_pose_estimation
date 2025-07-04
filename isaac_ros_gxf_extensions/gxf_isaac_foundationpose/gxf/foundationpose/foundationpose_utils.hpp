@@ -18,26 +18,26 @@
 #ifndef NVIDIA_ISAAC_ROS_EXTENSIONS_FOUNDATIONPOSE_UTILS_HPP_
 #define NVIDIA_ISAAC_ROS_EXTENSIONS_FOUNDATIONPOSE_UTILS_HPP_
 
-#include <iostream>
+#pragma once
 
+// C++ system headers
+#include <memory>
+#include <string>
+#include <utility>
+
+// External dependencies
 #include <Eigen/Dense>
+#include <cuda_runtime.h>
+#include <opencv2/opencv.hpp>
 
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#include <assimp/Importer.hpp>
-
-#include "cuda.h"
-#include "cuda_runtime.h"
-
-#include "gxf/cuda/cuda_stream.hpp"
-#include "gxf/cuda/cuda_stream_pool.hpp"
+// GXF headers
 #include "gxf/core/entity.hpp"
 #include "gxf/core/expected.hpp"
-#include "gxf/core/gxf.h"
 #include "gxf/std/timestamp.hpp"
 
 namespace nvidia {
-namespace {
+namespace isaac_ros {
+
 #define CHECK_CUDA_ERRORS(result) \
   { CheckCudaErrors(result, __FILE__, __LINE__); }
 inline void CheckCudaErrors(cudaError_t result, const char* filename, int line_number) {
@@ -47,17 +47,44 @@ inline void CheckCudaErrors(cudaError_t result, const char* filename, int line_n
                      " in line " + std::to_string(line_number);
   }
 }
-}  // namespace
 
-// Finds the minimum and maximum vertex from the mesh loaded by assimp
-std::pair<Eigen::Vector3f, Eigen::Vector3f> FindMinMaxVertex(const aiMesh* mesh);
 
-// Calculates the diameter of the mesh loaded by assimp
-float CalcMeshDiameter(const aiMesh* mesh);
+inline gxf::Expected<void> AddInputTimestampToOutput(gxf::Entity& output, gxf::Entity input) {
+  std::string named_timestamp{"timestamp"};
+  std::string unnamed_timestamp{""};
+  auto maybe_input_timestamp = input.get<gxf::Timestamp>(named_timestamp.c_str());
 
-// Updates/adds timestamp entity to the ouput gxf message entity from the input gxf message entity
-gxf::Expected<void> AddInputTimestampToOutput(gxf::Entity& output, gxf::Entity input);
+  // Try to get a named timestamp from the input entity
+  if (!maybe_input_timestamp) {
+    maybe_input_timestamp = input.get<gxf::Timestamp>(unnamed_timestamp.c_str());
+  }
+  // If there is no named timestamp, try to get a unnamed timestamp from the input entity
+  if (!maybe_input_timestamp) {
+    GXF_LOG_ERROR("Failed to get input timestamp!");
+    return gxf::ForwardError(maybe_input_timestamp);
+  }
 
+  // Try to get a named timestamp from the output entity
+  auto maybe_output_timestamp = output.get<gxf::Timestamp>(named_timestamp.c_str());
+  // If there is no named timestamp, try to get a unnamed timestamp from the output entity
+  if (!maybe_output_timestamp) {
+    maybe_output_timestamp = output.get<gxf::Timestamp>(unnamed_timestamp.c_str());
+  }
+
+  // If there is no unnamed timestamp also, then add a named timestamp to the output entity
+  if (!maybe_output_timestamp) {
+    maybe_output_timestamp = output.add<gxf::Timestamp>(named_timestamp.c_str());
+    if (!maybe_output_timestamp) {
+      GXF_LOG_ERROR("Failed to add timestamp to output message!");
+      return gxf::ForwardError(maybe_output_timestamp);
+    }
+  }
+
+  *maybe_output_timestamp.value() = *maybe_input_timestamp.value();
+  return gxf::Success;
+}
+
+}  // namespace isaac_ros
 }  // namespace nvidia
 
 #endif  // NVIDIA_ISAAC_ROS_EXTENSIONS_FOUNDATIONPOSE_UTILS_HPP_

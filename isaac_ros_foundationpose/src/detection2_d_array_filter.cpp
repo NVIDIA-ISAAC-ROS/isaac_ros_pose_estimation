@@ -21,6 +21,8 @@
 #include <vision_msgs/msg/detection2_d.hpp>
 #include <vision_msgs/msg/detection2_d_array.hpp>
 
+#include "isaac_ros_common/qos.hpp"
+
 namespace nvidia
 {
 namespace isaac_ros
@@ -37,11 +39,13 @@ class Detection2DArrayFilter : public rclcpp::Node
 public:
   explicit Detection2DArrayFilter(const rclcpp::NodeOptions & options)
   : Node("detection2_d_to_mask", options),
+    input_qos_{::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "input_qos")},
+    output_qos_{::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos")},
     desired_class_id_(declare_parameter<std::string>("desired_class_id", "")),
     detection2_d_array_sub_{create_subscription<vision_msgs::msg::Detection2DArray>(
-        "detection2_d_array", 10,
+        "detection2_d_array", input_qos_,
         std::bind(&Detection2DArrayFilter::boundingBoxArrayCallback, this, std::placeholders::_1))},
-    detection2_d_pub_{create_publisher<vision_msgs::msg::Detection2D>("detection2_d", 10)}
+    detection2_d_pub_{create_publisher<vision_msgs::msg::Detection2D>("detection2_d", output_qos_)}
   {}
 
   void boundingBoxArrayCallback(const vision_msgs::msg::Detection2DArray::SharedPtr msg)
@@ -73,6 +77,10 @@ public:
   }
 
 private:
+  // QOS settings
+  rclcpp::QoS input_qos_;
+  rclcpp::QoS output_qos_;
+
   std::string desired_class_id_;
   rclcpp::Subscription<vision_msgs::msg::Detection2DArray>::SharedPtr detection2_d_array_sub_;
   rclcpp::Publisher<vision_msgs::msg::Detection2D>::SharedPtr detection2_d_pub_;

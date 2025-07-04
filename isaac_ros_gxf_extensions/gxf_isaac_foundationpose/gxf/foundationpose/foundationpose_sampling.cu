@@ -15,8 +15,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#include <cstdio>
 #include "foundationpose_sampling.cu.hpp"
+
+#include <cstdio>
 
 namespace nvidia {
 namespace isaac_ros {

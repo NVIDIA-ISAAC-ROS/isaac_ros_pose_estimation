@@ -254,14 +254,13 @@ components:
     point_cloud_input: point_cloud_input
     rgb_input: rgb_input
     camera_model_input: camera_model_input
-    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
-    texture_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/texture_map.png
     mode: refine
     output: output
     allocator: allocator
     min_depth: 0.1
     max_depth: 4.0
     cuda_stream_pool: utils/stream
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
@@ -385,10 +384,10 @@ components:
     refined_poses_input: refined_poses_input
     sliced_output: sliced_output
     batched_output: batched_output
-    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
     allocator: allocator
     mode: tracking
     cuda_stream_pool: utils/stream
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
@@ -431,10 +430,10 @@ components:
     pose_array_input: pose_array_input
     output: output
     pose_matrix_output: pose_matrix_output
-    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
     allocator: allocator
     mode: tracking
     cuda_stream_pool: utils/stream
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
@@ -554,3 +553,8 @@ components:
     stream_priority: 0
     reserved_size: 1
     max_size: 5
+- name: mesh_storage
+  type: nvidia::isaac_ros::MeshStorage
+  parameters:
+    mesh_file_path: textured_simple.obj
+    cuda_stream_pool: stream
