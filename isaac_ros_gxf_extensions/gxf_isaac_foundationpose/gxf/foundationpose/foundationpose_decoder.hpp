@@ -31,6 +31,8 @@
 #include "gxf/std/receiver.hpp"
 #include "gxf/std/transmitter.hpp"
 
+#include "mesh_storage.hpp"
+
 namespace nvidia {
 namespace isaac_ros {
 
@@ -50,14 +52,9 @@ class FoundationposeDecoder : public gxf::Codelet {
   gxf::Parameter<gxf::Handle<gxf::Transmitter>> pose_matrix_transmitter_;
   gxf::Parameter<gxf::Handle<gxf::Allocator>> allocator_;
   gxf::Parameter<gxf::Handle<gxf::CudaStreamPool>> cuda_stream_pool_;
-  gxf::Parameter<std::string> mesh_file_path_;
   gxf::Parameter<std::string> mode_;
   gxf::Handle<gxf::CudaStream> cuda_stream_handle_;
-
-  // Bounding box size
-  float bbox_size_x_;
-  float bbox_size_y_;
-  float bbox_size_z_;
+  gxf::Parameter<gxf::Handle<MeshStorage>> mesh_storage_;
 
   Eigen::Vector3f mesh_model_center_;
   cudaStream_t cuda_stream_ = 0;

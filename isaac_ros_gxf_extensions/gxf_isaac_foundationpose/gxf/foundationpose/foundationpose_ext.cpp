@@ -23,8 +23,9 @@
 #include "foundationpose_decoder.hpp"
 #include "foundationpose_render.hpp"
 #include "foundationpose_sampling.hpp"
+#include "foundationpose_sync.hpp"
 #include "foundationpose_transformation.hpp"
-#include "render_receptive_scheduling_term.hpp"
+#include "mesh_storage.hpp"
 
 extern "C" {
 
@@ -35,6 +36,10 @@ GXF_EXT_FACTORY_SET_INFO(
     "FoundationPose GXF extension", "NVIDIA", "1.0.0", "LICENSE");
 
 GXF_EXT_FACTORY_ADD(
+    0xf6bbcfd111984aeb, 0xb6dbf26d3125540f, nvidia::isaac_ros::MeshStorage,
+    nvidia::gxf::Component, "Stores and manages mesh data");
+
+GXF_EXT_FACTORY_ADD(
     0x52138759e5824999, 0x8d26bd90e602d335, nvidia::isaac_ros::FoundationposeSampling,
     nvidia::gxf::Codelet, "Codelet to generate pose hypothesis.");
 
@@ -43,16 +48,16 @@ GXF_EXT_FACTORY_ADD(
     nvidia::gxf::Codelet, "Codelet to decode, sort and select the final pose.");
 
 GXF_EXT_FACTORY_ADD(
+    0x52138759e5824998, 0x8d26bd90e603d335, nvidia::isaac_ros::FoundationPoseSynchronization,
+    nvidia::gxf::Codelet, "Codelet to generate sync pairs for Foundation pose loads");
+
+GXF_EXT_FACTORY_ADD(
     0x97104bb7e89f2b2a, 0x9de6f7fd399a201d, nvidia::isaac_ros::FoundationposeTransformation,
     nvidia::gxf::Codelet, "Codelet to trasnform poses for foundation pose.");
 
 GXF_EXT_FACTORY_ADD(
     0x63138759e5624879, 0x4a95bd90e602d324, nvidia::isaac_ros::FoundationposeRender,
     nvidia::gxf::Codelet, "Codelet to generate pose hypothesis.");
-
-GXF_EXT_FACTORY_ADD(
-    0x7b605fa9ec204371, 0x90bdab77b52927e8, nvidia::isaac_ros::RenderReceptiveSchedulingTerm,
-    nvidia::gxf::SchedulingTerm, "Codelet to generate pose hypothesis.");
 
 GXF_EXT_FACTORY_ADD_0(
     0x65d4476051a512ee, 0xb3f727d2ed955145, nvidia::isaac::ObjectHypothesis,

@@ -22,34 +22,22 @@ components:
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-- type: nvidia::gxf::MessageAvailableSchedulingTerm
-  parameters:
-    receiver: rgb_image_receiver
-    min_size: 1
 - name: camera_model_receiver
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-- type: nvidia::gxf::MessageAvailableSchedulingTerm
-  parameters:
-    receiver: camera_model_receiver
-    min_size: 1
 - name: mask_receiver
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-- type: nvidia::gxf::MessageAvailableSchedulingTerm
+- name: pose_estimate_rx
+  type: nvidia::gxf::DoubleBufferReceiver
   parameters:
-    receiver: mask_receiver
-    min_size: 1
+    capacity: 1
 - name: depth_receiver
   type: nvidia::gxf::DoubleBufferReceiver
   parameters:
     capacity: 12
-- type: nvidia::gxf::MessageAvailableSchedulingTerm
-  parameters:
-    receiver: depth_receiver
-    min_size: 1
 - name: rgb_image_transmitter
   type: nvidia::gxf::DoubleBufferTransmitter
   parameters:
@@ -82,10 +70,20 @@ components:
   parameters:
     transmitter: depth_transmitter
     min_size: 1
-- type: nvidia::gxf::Synchronization
+- type: nvidia::gxf::MultiMessageAvailableSchedulingTerm
+  parameters:
+    receiver: depth_receiver
+    receivers: [ depth_receiver, mask_receiver, rgb_image_receiver, camera_model_receiver, pose_estimate_rx ]
+    min_size: 1
+- type: nvidia::isaac_ros::FoundationPoseSynchronization
   parameters:
     inputs: [rgb_image_receiver, camera_model_receiver, mask_receiver, depth_receiver]
     outputs: [rgb_image_transmitter, camera_model_transmitter, mask_transmitter, depth_transmitter]
+    discard_old_messages: false
+    discard_time_ms: 1000
+    pose_estimation_timeout_ms: 5000
+    pose_estimate_rx: pose_estimate_rx
+    sync_threshold: 0
 ---
 name: depth_message_compositor
 components:
@@ -262,7 +260,8 @@ components:
     storage_type: 1
     block_size: 16128  # Max_batch_size(252) * pose_matrix_size(4*4) * score_type(4) 
     num_blocks: 60 # 6 blocks per frame
-- type: nvidia::isaac_ros::FoundationposeSampling
+- name: sampling_component
+  type: nvidia::isaac_ros::FoundationposeSampling
   parameters:
     point_cloud_input: point_cloud_input
     depth_input: depth_input
@@ -275,13 +274,11 @@ components:
     allocator: allocator
     cuda_stream_pool: utils/stream
     min_depth: 0.1
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
     min_blocks: 6
-- type: nvidia::isaac_ros::RenderReceptiveSchedulingTerm
-  parameters:
-    render_impl: render/render_refine
 ---
 name: pose_broadcaster
 components:
@@ -502,8 +499,6 @@ components:
     point_cloud_input: point_cloud_input
     rgb_input: rgb_input
     camera_model_input: camera_model_input
-    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
-    texture_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/texture_map.png
     mode: refine
     output: output
     allocator: allocator
@@ -519,6 +514,7 @@ components:
     iterative_point_cloud_output: iterative_point_cloud_output
     iterative_rgb_output: iterative_rgb_output
     iterative_camera_model_output: iterative_camera_model_output
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
@@ -663,11 +659,11 @@ components:
     iterative_sliced_output: iterative_sliced_output
     sliced_output: sliced_output
     batched_output: batched_output
-    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
     allocator: allocator
     mode: detection
     refine_iterations: 1
     cuda_stream_pool: utils/stream
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
@@ -757,14 +753,13 @@ components:
     point_cloud_input: point_cloud_input
     rgb_input: rgb_input
     camera_model_input: camera_model_input
-    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
-    texture_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/texture_map.png
     output: output
     allocator: allocator
     mode: score
     min_depth: 0.1
     max_depth: 4.0
     cuda_stream_pool: utils/stream
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
@@ -891,14 +886,44 @@ components:
     pose_scores_input: pose_scores_input
     output: output
     pose_matrix_output: pose_matrix_output
-    mesh_file_path: /workspaces/isaac_ros-dev/ros_ws/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/textured_simple.obj
     allocator: allocator
     mode: pose_estimation
     cuda_stream_pool: utils/stream
+    mesh_storage: utils/mesh_storage
 - type: nvidia::gxf::MemoryAvailableSchedulingTerm
   parameters:
     allocator: allocator
     min_blocks: 1
+---
+name: broadcaster
+components:
+- name: source
+  type: nvidia::gxf::DoubleBufferReceiver
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::MessageAvailableSchedulingTerm
+  parameters:
+    receiver: source
+    min_size: 1
+- type: nvidia::gxf::Broadcast
+  parameters:
+    source: source
+- name: pose_sink_tx
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- name: sync_tx
+  type: nvidia::gxf::DoubleBufferTransmitter
+  parameters:
+    capacity: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: pose_sink_tx
+    min_size: 1
+- type: nvidia::gxf::DownstreamReceptiveSchedulingTerm
+  parameters:
+    transmitter: sync_tx
+    min_size: 1
 ---
 name: pose_sink
 components:
@@ -1071,7 +1096,15 @@ components:
 - type: nvidia::gxf::Connection
   parameters:
     source: decoder/output
+    target: broadcaster/source
+- type: nvidia::gxf::Connection
+  parameters:
+    source: broadcaster/pose_sink_tx
     target: pose_sink/signal
+- type: nvidia::gxf::Connection
+  parameters:
+    source: broadcaster/sync_tx
+    target: sync/pose_estimate_rx
 - type: nvidia::gxf::Connection
   parameters:
     source: decoder/pose_matrix_output
@@ -1086,7 +1119,7 @@ components:
     clock: clock
     stop_on_deadlock: false
     check_recession_period_ms: 1
-    worker_thread_number: 1
+    worker_thread_number: 2
 - type: nvidia::gxf::JobStatistics
   parameters:
     clock: clock
@@ -1098,3 +1131,8 @@ components:
     stream_priority: 0
     reserved_size: 1
     max_size: 8
+- name: mesh_storage
+  type: nvidia::isaac_ros::MeshStorage
+  parameters:
+    mesh_file_path: textured_simple.obj
+    cuda_stream_pool: stream

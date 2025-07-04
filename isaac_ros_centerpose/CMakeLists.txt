@@ -47,13 +47,22 @@ set_target_properties(centerpose_visualizer_node PROPERTIES
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  # Force use of ROS2 vendor googletest to avoid version conflicts
+  set(CMAKE_IGNORE_PATH "/usr/src/googletest" ${CMAKE_IGNORE_PATH})
+  set(CMAKE_IGNORE_PATH "/usr/include/gtest" ${CMAKE_IGNORE_PATH})
+  set(CMAKE_IGNORE_PATH "/usr/include/gmock" ${CMAKE_IGNORE_PATH})
+
+  # Explicitly use ROS2 vendor googletest/gmock
+  include_directories(BEFORE /opt/ros/humble/src/gtest_vendor/include)
+  include_directories(BEFORE /opt/ros/humble/src/gmock_vendor/include)
 
   # Gtest for decoder_node
   ament_add_gtest(centerpose_decoder_node_test test/centerpose_decoder_node_test.cpp)
   target_link_libraries(centerpose_decoder_node_test centerpose_decoder_node)
   target_include_directories(centerpose_decoder_node_test PUBLIC include/isaac_ros_centerpose/)
-  target_include_directories(centerpose_decoder_node_test PUBLIC /usr/src/googletest/googlemock/include/)
   ament_target_dependencies(centerpose_decoder_node_test rclcpp)
   ament_target_dependencies(centerpose_decoder_node_test isaac_ros_nitros)
   # The FindPythonInterp and FindPythonLibs modules are removed

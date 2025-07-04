@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,14 +16,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "foundationpose_transformation.hpp"
-#include "foundationpose_utils.hpp"
-
-#include <cuda_runtime.h>
 
 #include <cmath>
 #include <iostream>
 #include <string>
 
+#include <cuda_runtime.h>
+
+#include "foundationpose_utils.hpp"
 #include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
 #include "gxf/std/tensor.hpp"
@@ -59,9 +59,6 @@ gxf_result_t FoundationposeTransformation::registerInterface(gxf::Registrar* reg
       batched_pose_array_transmitter_, "batched_output", "Pose_Array output", "Batched ouput poses as a pose array");
 
   result &= registrar->parameter(
-      mesh_file_path_, "mesh_file_path", "obj mesh file path", "Path to your object mesh file");
-
-  result &= registrar->parameter(
       rot_normalizer_, "rot_normalizer", "Rotation Normalizer", "Rotation Normalizer");
 
   result &= registrar->parameter(
@@ -77,6 +74,10 @@ gxf_result_t FoundationposeTransformation::registerInterface(gxf::Registrar* reg
   result &= registrar->parameter(
       cuda_stream_pool_, "cuda_stream_pool", "Cuda Stream Pool",
       "Instance of gxf::CudaStreamPool to allocate CUDA stream.");
+
+  result &= registrar->parameter(
+      mesh_storage_, "mesh_storage", "Mesh Storage",
+      "Component to reuse mesh");
 
   // Only used for iterative refinement
   result &= registrar->parameter(
@@ -98,26 +99,6 @@ gxf_result_t FoundationposeTransformation::start() noexcept {
     GXF_LOG_ERROR("Refine iterations should be at least 1");
     return GXF_FAILURE;
   }
-
-  Assimp::Importer importer;
-  const aiScene* scene = importer.ReadFile(
-      mesh_file_path_.get(),
-      aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_SortByPType);
-
-  if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-    GXF_LOG_ERROR("[FoundationposeTransformation] Error while loading mesh file ERROR::ASSIMP::");
-    GXF_LOG_ERROR(importer.GetErrorString());
-    return GXF_FAILURE;
-  }
-
-  if (scene->mNumMeshes == 0) {
-    GXF_LOG_ERROR("[FoundationposeTransformation] No mesh was found in the mesh file");
-    return GXF_FAILURE;
-  }
-
-  // Only take the first mesh
-  const aiMesh* mesh = scene->mMeshes[0];
-  mesh_diameter_ = CalcMeshDiameter(mesh);
 
   // Get cuda stream from stream pool
   auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
@@ -185,6 +166,13 @@ gxf_result_t FoundationposeTransformation::tick() noexcept {
     return maybe_pose_tensor.error();
   }
 
+  // Load and process mesh data
+  auto mesh_data_ptr = mesh_storage_.get()->GetMeshData();
+  if (!mesh_data_ptr) {
+    GXF_LOG_ERROR("[FoundationposeTransformation] Failed to load mesh data");
+    return GXF_FAILURE;
+  }
+
   auto rotations_handle = maybe_rotation_tensor.value();
   auto translations_handle = maybe_translation_tensor.value();
   auto poses_handle = maybe_pose_tensor.value();
@@ -211,9 +199,16 @@ gxf_result_t FoundationposeTransformation::tick() noexcept {
     return GXF_FAILURE;
   }
 
-  // Check the size are equal
-  if (pose_nums != rotation_nums || rotation_nums != translations_nums) {
-    GXF_LOG_ERROR("[FoundationposeTransformation] The batch size of received poses are not equal!");
+  // Check translation and rotation num are equal
+  if (rotation_nums != translations_nums) {
+    GXF_LOG_ERROR("[FoundationposeTransformation] The received poses are not equal! rotation_nums: %d, translations_nums: %d", rotation_nums, translations_nums);
+    return GXF_FAILURE;
+  }
+
+  // Pose num and translation num could be different, as tensorRT allocate output with the max batch size
+  // Pose num should always be less or equal to translation num
+  if (pose_nums > translations_nums) {
+    GXF_LOG_ERROR("[FoundationposeTransformation] The pose num is greater than the translation num! pose_nums: %d, translations_nums: %d", pose_nums, translations_nums);
     return GXF_FAILURE;
   }
 
@@ -225,13 +220,13 @@ gxf_result_t FoundationposeTransformation::tick() noexcept {
   std::vector<Eigen::Matrix3f> rot_mat_delta(pose_nums);
 
   CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-      B_in_cam.data(), poses_handle->pointer(), poses_handle->size(),
+      B_in_cam.data(), poses_handle->pointer(), B_in_cam.size() * sizeof(float),
       cudaMemcpyDeviceToHost, cuda_stream_));
   CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-      trans_delta.data(), translations_handle->pointer(), translations_handle->size(),
+      trans_delta.data(), translations_handle->pointer(), trans_delta.size() * sizeof(float),
       cudaMemcpyDeviceToHost, cuda_stream_));
   CHECK_CUDA_ERRORS(cudaMemcpyAsync(
-      rot_delta.data(), rotations_handle->pointer(), translations_handle->size(),
+      rot_delta.data(), rotations_handle->pointer(), rot_delta.size() * sizeof(float),
       cudaMemcpyDeviceToHost, cuda_stream_));
   CHECK_CUDA_ERRORS(cudaStreamSynchronize(cuda_stream_));
 
@@ -240,7 +235,7 @@ gxf_result_t FoundationposeTransformation::tick() noexcept {
     Eigen::Map<Eigen::Vector3f> cur_trans_delta(trans_delta.data() + index * 3, 3);
     Eigen::Map<Eigen::Vector3f> cur_rot_delta(rot_delta.data() + index * 3, 3);
 
-    trans_delta_vec[index] = cur_trans_delta.array() * (mesh_diameter_ / 2);
+    trans_delta_vec[index] = cur_trans_delta.array() * (mesh_data_ptr->mesh_diameter / 2);
     // Transform rotation vector into matrix through Rodrigues transform
     auto normalized_vect = (cur_rot_delta.array().tanh() * rot_normalizer_).matrix();
     Eigen::AngleAxisf rot_delta_angle_axis(normalized_vect.norm(), normalized_vect.normalized());
