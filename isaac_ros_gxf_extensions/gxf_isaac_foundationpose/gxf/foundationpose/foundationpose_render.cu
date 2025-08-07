@@ -233,6 +233,9 @@ __global__ void pose_clip_kernel_fused(
         result = matrix_vec_mul4x4(shared_bbox, result);
 
         *transformed_matrix = result;
+
+        // Make sure all threads have read the shared memory before thread 0 writes to it in the next iteration
+        __syncthreads();
     }
 }
 
