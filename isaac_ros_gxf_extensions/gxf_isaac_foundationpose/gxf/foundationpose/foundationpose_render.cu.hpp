@@ -50,7 +50,7 @@ void rasterize(
     int H, int W, int C);
 void interpolate(
     cudaStream_t stream, float* attr_ptr, float* rast_ptr, int32_t* tri_ptr, float* out, int num_vertices,
-    int num_triangles, int attr_dim, int H, int W, int C);
+    int num_triangles, int attr_dim, int H, int W, int C, int attr_bc = 0);
 void texture(
     cudaStream_t stream, float* tex_ptr, float* uv_ptr, float* out, int tex_height, int tex_width, int tex_channel,
     int tex_depth, int H, int W, int N);
