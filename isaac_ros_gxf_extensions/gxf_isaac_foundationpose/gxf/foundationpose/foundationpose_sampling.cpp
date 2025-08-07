@@ -817,14 +817,6 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
     m.block<3, 1>(0, 3) = center;
   }
 
-  // Flatten vector of eigen matrix into vector to make the memory continuous
-  std::vector<float> ob_in_cams_vector;
-  ob_in_cams_vector.reserve(ob_in_cams.size() * ob_in_cams[0].size());
-  for (auto& mat : ob_in_cams) {
-    std::vector<float> mat_data(mat.data(), mat.data() + mat.size());
-    ob_in_cams_vector.insert(ob_in_cams_vector.end(), mat_data.begin(), mat_data.end());
-  }
-
   // Add padding to the last batch to make the size divisible by kNumBatches
   auto remainder = ob_in_cams.size() % kNumBatches;
   auto padding_size = remainder == 0 ? 0 : kNumBatches - remainder;
@@ -836,6 +828,14 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
     for (int i = 0; i < padding_size; i++) {
       ob_in_cams.push_back(Eigen::Matrix4f::Identity());
     }
+  }
+
+  // Flatten vector of eigen matrix into vector to make the memory continuous
+  std::vector<float> ob_in_cams_vector;
+  ob_in_cams_vector.reserve(ob_in_cams.size() * ob_in_cams[0].size());
+  for (auto& mat : ob_in_cams) {
+    std::vector<float> mat_data(mat.data(), mat.data() + mat.size());
+    ob_in_cams_vector.insert(ob_in_cams_vector.end(), mat_data.begin(), mat_data.end());
   }
 
   int batch_size = ob_in_cams.size() / kNumBatches;
