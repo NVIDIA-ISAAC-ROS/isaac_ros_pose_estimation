@@ -167,6 +167,8 @@ public:
 
   void resetRequestCallback(const std_msgs::msg::Empty::ConstSharedPtr & request_msg)
   {
+    (void) request_msg; // Supress unused parameter warning
+
     resetCallback();
   }
 
