@@ -444,13 +444,14 @@ std::vector<Eigen::Matrix4f> SampleViewsIcosphere(unsigned int n_views) {
 std::vector<Eigen::Matrix4f> MakeRotationGrid(const std::vector<std::string>& symmetry_axes, 
                                              const std::vector<std::string>& fixed_axis_angles, 
                                              unsigned int n_views = 40, 
-                                             int inplane_step = 60) {
+                                             double inplane_step = 60.0) {
   auto cam_in_obs = SampleViewsIcosphere(n_views);
   GXF_LOG_DEBUG("[FoundationposeSampling] %lu poses generated from icosphere", cam_in_obs.size());
 
+  inplane_step = inplane_step / 180.0 * M_PI;  // Convert degrees to radians
   std::vector<Eigen::Matrix4f> rot_grid;
   for (unsigned int i = 0; i < cam_in_obs.size(); i++) {
-    for (double inplane_rot = 0; inplane_rot < 360; inplane_rot += inplane_step) {
+    for (double inplane_rot = 0; inplane_rot < 2.0 * M_PI; inplane_rot += inplane_step) {
       Eigen::Matrix4f cam_in_ob = cam_in_obs[i];
       auto R_inplane = Eigen::Affine3f::Identity();
       R_inplane.rotate(Eigen::AngleAxisf(0, Eigen::Vector3f::UnitX()))
@@ -817,14 +818,6 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
     m.block<3, 1>(0, 3) = center;
   }
 
-  // Flatten vector of eigen matrix into vector to make the memory continuous
-  std::vector<float> ob_in_cams_vector;
-  ob_in_cams_vector.reserve(ob_in_cams.size() * ob_in_cams[0].size());
-  for (auto& mat : ob_in_cams) {
-    std::vector<float> mat_data(mat.data(), mat.data() + mat.size());
-    ob_in_cams_vector.insert(ob_in_cams_vector.end(), mat_data.begin(), mat_data.end());
-  }
-
   // Add padding to the last batch to make the size divisible by kNumBatches
   auto remainder = ob_in_cams.size() % kNumBatches;
   auto padding_size = remainder == 0 ? 0 : kNumBatches - remainder;
@@ -836,6 +829,14 @@ gxf_result_t FoundationposeSampling::tick() noexcept {
     for (int i = 0; i < padding_size; i++) {
       ob_in_cams.push_back(Eigen::Matrix4f::Identity());
     }
+  }
+
+  // Flatten vector of eigen matrix into vector to make the memory continuous
+  std::vector<float> ob_in_cams_vector;
+  ob_in_cams_vector.reserve(ob_in_cams.size() * ob_in_cams[0].size());
+  for (auto& mat : ob_in_cams) {
+    std::vector<float> mat_data(mat.data(), mat.data() + mat.size());
+    ob_in_cams_vector.insert(ob_in_cams_vector.end(), mat_data.begin(), mat_data.end());
   }
 
   int batch_size = ob_in_cams.size() / kNumBatches;

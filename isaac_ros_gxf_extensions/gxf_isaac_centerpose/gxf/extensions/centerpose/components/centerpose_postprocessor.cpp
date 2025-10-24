@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "cuda.h"          // NOLINT
@@ -123,7 +124,8 @@ template <typename T, int rows, int cols, int type>
 gxf::Expected<void> ToTensor(
     const std::vector<Eigen::Matrix<T, rows, cols, type>>& eigen_type,
     gxf::Handle<gxf::Tensor> tensor, gxf::Handle<gxf::Allocator> allocator,
-    const gxf::MemoryStorageType storage_type, const cudaMemcpyKind operation) {
+    const gxf::MemoryStorageType storage_type, const cudaMemcpyKind operation,
+    const cudaStream_t cuda_stream_) {
   // Handle special case when input is empty
   if (eigen_type.size() == 0) {
     return gxf::Success;
@@ -138,8 +140,9 @@ gxf::Expected<void> ToTensor(
         for (size_t i = 0; i < eigen_type.size(); ++i) {
           size_t size = tensor->size() / tensor->shape().dimension(0);
           size_t start = i * size;
-          cudaError_t error =
-              cudaMemcpy(tensor->pointer() + start, eigen_type[i].data(), size, operation);
+          // Add cuda stream here aboveand make it an async function call
+          cudaError_t error = cudaMemcpyAsync(
+              tensor->pointer() + start, eigen_type[i].data(), size, operation, cuda_stream_);
           if (error != cudaSuccess) {
             GXF_LOG_ERROR("Error while copying from device to host: %s", cudaGetErrorString(error));
             return gxf::Unexpected{GXF_FAILURE};
@@ -153,15 +156,17 @@ template <typename T>
 gxf::Expected<void> ToTensor(
     const std::vector<T>& vec, gxf::Handle<gxf::Tensor> tensor,
     gxf::Handle<gxf::Allocator> allocator, const gxf::MemoryStorageType storage_type,
-    const cudaMemcpyKind operation) {
+    const cudaMemcpyKind operation, const cudaStream_t cuda_stream_) {
   // handle when input is empty
   if (vec.size() == 0) {
     return gxf::Success;
   }
   return tensor->reshape<T>(gxf::Shape{static_cast<int>(vec.size()), 1}, storage_type, allocator)
       .and_then([&]() -> gxf::Expected<void> {
+        // Add cuda stream here aboveand make it an async function call
         const cudaError_t error =
-            cudaMemcpy(tensor->pointer(), vec.data(), tensor->size(), operation);
+            cudaMemcpyAsync(tensor->pointer(), vec.data(), tensor->size(), operation,
+                cuda_stream_);
         if (error != cudaSuccess) {
           GXF_LOG_ERROR("Error while copying from device to host: %s", cudaGetErrorString(error));
           return gxf::Unexpected{GXF_FAILURE};
@@ -258,10 +263,27 @@ gxf_result_t CenterPosePostProcessor::registerInterface(gxf::Registrar* registra
   result &= registrar->parameter(
       score_threshold_, "score_threshold", "Score Threshold",
       "Any detections with scores less than this value will be discarded");
+  result &= registrar->parameter(
+      cuda_stream_pool_, "stream_pool", "Cuda Stream Pool",
+      "Instance of gxf::CudaStreamPool to allocate CUDA stream.");
   return gxf::ToResultCode(result);
 }
 
 gxf_result_t CenterPosePostProcessor::start() {
+  // Get cuda stream from stream pool
+  auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
+  if (!maybe_stream) {
+    return gxf::ToResultCode(maybe_stream);
+  }
+
+  cuda_stream_handle_ = std::move(maybe_stream.value());
+  if (!cuda_stream_handle_->stream()) {
+    GXF_LOG_ERROR("Allocated stream is not initialized!");
+    return GXF_FAILURE;
+  }
+  if (!cuda_stream_handle_.is_null()) {
+    cuda_stream_ = cuda_stream_handle_->stream().value();
+  }
   camera_matrix_ = Eigen::Matrix3f::Identity();
   original_image_size_ = Eigen::Vector2i{0, 0};
   output_field_size_ =
@@ -347,9 +369,10 @@ gxf_result_t CenterPosePostProcessor::tick() {
 
       size_t tensor_size = tensors[i]->size() / tensors[i]->shape().dimension(0);
       size_t tensor_start_idx = batch * tensor_size;
-      const cudaError_t memcpy_error = cudaMemcpy(
+      // Add cuda stream here aboveand make it an async function call
+      const cudaError_t memcpy_error = cudaMemcpyAsync(
           batch_tensors[i].data(), tensors[i]->pointer() + tensor_start_idx, tensor_size,
-          cudaMemcpyDeviceToHost);
+          cudaMemcpyDeviceToHost, cuda_stream_);
       if (memcpy_error != cudaSuccess) {
         GXF_LOG_ERROR("Error: %s", cudaGetErrorString(memcpy_error));
         return GXF_FAILURE;
@@ -418,15 +441,16 @@ CenterPoseDetectionList CenterPosePostProcessor::processTensor(
     pnp_result.pose.orientation.normalize();
     Eigen::MatrixXfRM points_3d_cam = Calculate3DPoints(pnp_result, cuboid3d);
 
-    Eigen::Vector3f points_3d_cam_mean = points_3d_cam.colwise().mean();
-    Eigen::Vector2f projected_points_mean = pnp_result.projected_points.colwise().mean();
+    Eigen::Vector3f points_3d_cam_mean = points_3d_cam.colwise().mean().transpose();
+    Eigen::Vector2f projected_points_mean =
+        pnp_result.projected_points.colwise().mean().transpose();
 
     Eigen::MatrixXfRM keypoints3d(1 + points_3d_cam.rows(), points_3d_cam.cols());
-    keypoints3d << points_3d_cam_mean.transpose(), points_3d_cam;
+    keypoints3d << points_3d_cam_mean, points_3d_cam;
 
     Eigen::MatrixXfRM projected_keypoints2d(
         1 + pnp_result.projected_points.rows(), pnp_result.projected_points.cols());
-    projected_keypoints2d << projected_points_mean.transpose(), pnp_result.projected_points;
+    projected_keypoints2d << projected_points_mean, pnp_result.projected_points;
     detection.projected_keypoints_2d = projected_keypoints2d;
     detection.keypoints3d = keypoints3d;
     detection.position = pnp_result.pose.position;
@@ -483,49 +507,62 @@ gxf::Expected<void> CenterPosePostProcessor::publish(
       .and_then([&]() { return output_entity.add<gxf::Tensor>("class_id"); })
       .assign_to(class_id_tensor)
       .and_then([&]() {
-        return ToTensor(class_id, class_id_tensor, allocator_.get(), storage_type, operation);
+        return ToTensor(class_id, class_id_tensor, allocator_.get(), storage_type,
+            operation, cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Tensor>("keypoints2d"); })
       .assign_to(keypoints2d_tensor)
       .and_then([&]() {
-        return ToTensor(keypoints2d, keypoints2d_tensor, allocator_.get(), storage_type, operation);
+        return ToTensor(keypoints2d, keypoints2d_tensor, allocator_.get(), storage_type, operation,
+            cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Tensor>("projected_keypoints2d"); })
       .assign_to(projected_keypoints_2d_tensor)
       .and_then([&]() {
         return ToTensor(
             projected_keypoints_2d, projected_keypoints_2d_tensor, allocator_.get(), storage_type,
-            operation);
+            operation, cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Tensor>("keypoints3d"); })
       .assign_to(keypoints3d_tensor)
       .and_then([&]() {
-        return ToTensor(keypoints3d, keypoints3d_tensor, allocator_.get(), storage_type, operation);
+        return ToTensor(keypoints3d, keypoints3d_tensor, allocator_.get(), storage_type,
+            operation, cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Tensor>("position"); })
       .assign_to(position_tensor)
       .and_then([&]() {
-        return ToTensor(position, position_tensor, allocator_.get(), storage_type, operation);
+        return ToTensor(position, position_tensor, allocator_.get(), storage_type,
+            operation, cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Tensor>("quaternion_xyzw"); })
       .assign_to(quaternion_tensor)
       .and_then([&]() {
-        return ToTensor(quaternion, quaternion_tensor, allocator_.get(), storage_type, operation);
+        return ToTensor(quaternion, quaternion_tensor, allocator_.get(), storage_type,
+            operation, cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Tensor>("score"); })
       .assign_to(score_tensor)
       .and_then([&]() {
-        return ToTensor(score, score_tensor, allocator_.get(), storage_type, operation);
+        return ToTensor(score, score_tensor, allocator_.get(), storage_type,
+            operation, cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Tensor>("bbox_size"); })
       .assign_to(bbox_size_tensor)
       .and_then([&]() {
-        return ToTensor(bbox_size, bbox_size_tensor, allocator_.get(), storage_type, operation);
+        return ToTensor(bbox_size, bbox_size_tensor, allocator_.get(), storage_type,
+            operation, cuda_stream_);
       })
       .and_then([&]() { return output_entity.add<gxf::Timestamp>(kTimestampName); })
       .assign_to(output_timestamp)
       .and_then([&]() { *output_timestamp = *input_timestamp; })
-      .and_then([&]() { return output_->publish(output_entity); });
+      .and_then([&]() -> gxf::Expected<void> {
+        auto cuda_error = cudaStreamSynchronize(cuda_stream_);
+        if (cuda_error != cudaSuccess) {
+          return gxf::Unexpected{GXF_FAILURE};
+        }
+        return output_->publish(output_entity);
+      });
 }
 
 gxf_result_t CenterPosePostProcessor::stop() {

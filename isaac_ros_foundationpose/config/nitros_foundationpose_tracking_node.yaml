@@ -1,6 +1,6 @@
 %YAML 1.2
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -542,6 +542,7 @@ components:
     stop_on_deadlock: false
     check_recession_period_ms: 1
     worker_thread_number: 1
+    worker_thread_name_id: "foundationpose_tracking_node"
 - type: nvidia::gxf::JobStatistics
   parameters:
     clock: clock
@@ -549,10 +550,11 @@ components:
   type: nvidia::gxf::CudaStreamPool
   parameters:
     dev_id: 0
-    stream_flags: 0
+    stream_flags: 1
     stream_priority: 0
     reserved_size: 1
     max_size: 5
+    nvtx_identifier: "foundationpose_tracking_node_stream"
 - name: mesh_storage
   type: nvidia::isaac_ros::MeshStorage
   parameters:

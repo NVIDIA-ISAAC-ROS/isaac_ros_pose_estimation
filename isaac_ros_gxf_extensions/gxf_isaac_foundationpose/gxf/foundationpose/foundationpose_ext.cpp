@@ -19,7 +19,7 @@
 #include "gxf/core/gxf.h"
 #include "gxf/std/extension_factory_helper.hpp"
 
-#include "detection3_d_array_message.hpp"
+#include "detection3_d_array_message/detection3_d_array_message.hpp"
 #include "foundationpose_decoder.hpp"
 #include "foundationpose_render.hpp"
 #include "foundationpose_sampling.hpp"

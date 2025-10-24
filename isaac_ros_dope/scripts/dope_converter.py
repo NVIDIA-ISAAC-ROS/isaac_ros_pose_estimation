@@ -168,7 +168,11 @@ def save_pytorch(net, x, output_file):
 
 def save_onnx(net, x, output_file, input_name, output_name):
     torch.onnx.export(
-        net.module, x, output_file, input_names=[input_name], output_names=[output_name])
+        net.module, x, output_file,
+        input_names=[input_name],
+        output_names=[output_name],
+        dynamo=True  # Use modern exporter for static shapes
+    )
 
     # Validate and log onnx model information
     model = onnx.load(output_file)

@@ -1,6 +1,6 @@
 %YAML 1.2
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,6 +32,15 @@ components:
     capacity: 12
 - name: allocator
   type: nvidia::gxf::UnboundedAllocator
+- name: stream_pool
+  type: nvidia::gxf::CudaStreamPool
+  parameters:
+    dev_id: 0
+    stream_flags: 1
+    stream_priority: 0
+    reserved_size: 1
+    max_size: 1
+    nvtx_identifier: "dope_decoder_stream_pool"
 - name: dope_decoder
   type: nvidia::isaac_ros::dope::DopeDecoder
   parameters:
@@ -41,6 +50,7 @@ components:
     allocator: allocator
     object_dimensions: []
     object_name: ""
+    stream_pool: stream_pool
 - type: nvidia::gxf::MessageAvailableSchedulingTerm
   parameters:
     receiver: tensorlist_in
@@ -85,6 +95,7 @@ components:
     stop_on_deadlock: false
     check_recession_period_ms: 1
     worker_thread_number: 2
+    worker_thread_name_id: "dope_node"
 - type: nvidia::gxf::JobStatistics
   parameters:
     clock: clock

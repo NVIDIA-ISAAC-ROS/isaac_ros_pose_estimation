@@ -32,8 +32,6 @@
 #include "foundationpose_utils.hpp"
 
 namespace {
-constexpr int kFixTextureMapWidth = 1920;
-constexpr int kFixTextureMapHeight = 1080;
 constexpr int kFixTextureMapColor = 128;
 }  // namespace
 
@@ -87,12 +85,13 @@ gxf_result_t MeshStorage::LoadTextureData(const std::string& texture_file_path) 
   cv::Mat rgb_texture_map;
 
   if (!std::filesystem::exists(texture_file_path)) {
-    if (mesh_data_->texture_path.empty() && mesh_data_->texture_map_device != nullptr) {
+    if (mesh_data_->texture_path.empty() && mesh_data_->texture_map_device != nullptr && mesh_data_->texture_map_width == mesh_data_->num_vertices) {
       GXF_LOG_WARNING("[MeshStorage] %s could not be found, reuse the pure color texture map", texture_file_path.c_str());
       return GXF_SUCCESS;
     }
-    GXF_LOG_WARNING("[MeshStorage], %s could not be found, assign texture map with pure color", texture_file_path.c_str());
-    rgb_texture_map = cv::Mat(kFixTextureMapHeight, kFixTextureMapWidth, CV_8UC3,
+    GXF_LOG_WARNING("[MeshStorage] %s could not be found, assign texture map with pure color", texture_file_path.c_str());
+    // The pure color texture map is actually a list of vertex colors
+    rgb_texture_map = cv::Mat(1, mesh_data_->num_vertices, CV_8UC3,
                               cv::Scalar(kFixTextureMapColor, kFixTextureMapColor, kFixTextureMapColor));
     mesh_data_->has_tex = false;
   } else {
@@ -296,8 +295,9 @@ gxf_result_t MeshStorage::LoadMeshData(const std::string& mesh_file_path) {
     GXF_LOG_WARNING("[MeshStorage] No material index found for mesh");
   }
 
-  // Only reload texture if the path has changed
-  if (texture_path_str != mesh_data_->texture_path || mesh_data_->texture_map_device == nullptr) {
+  // Only reload texture if the path has changed or if no texture was loaded before
+  if (texture_path_str != mesh_data_->texture_path || mesh_data_->texture_map_device == nullptr
+      || !mesh_data_->has_tex) {
     GXF_LOG_DEBUG("[MeshStorage] Texture path has changed, reloading texture");
     auto result = LoadTextureData(texture_path_str);
     if (result != GXF_SUCCESS) {

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,6 +35,9 @@
 
 #include "opencv2/core/mat.hpp"
 
+#include "gxf/cuda/cuda_stream.hpp"
+#include "gxf/cuda/cuda_stream_pool.hpp"
+
 namespace nvidia {
 namespace isaac_ros {
 namespace dope {
@@ -68,10 +71,15 @@ class DopeDecoder : public gxf::Codelet {
   gxf::Parameter<double> rotation_y_axis_;
   gxf::Parameter<double> rotation_x_axis_;
   gxf::Parameter<double> rotation_z_axis_;
+  // CUDA stream pool
+  gxf::Parameter<gxf::Handle<gxf::CudaStreamPool>> cuda_stream_pool_;
 
   // Parsed parameters
   Eigen::Matrix<double, 3, 9> cuboid_3d_points_;
   cv::Mat camera_matrix_;
+  // CUDA stream variables
+  gxf::Handle<gxf::CudaStream> cuda_stream_handle_;
+  cudaStream_t cuda_stream_ = 0;
 };
 
 }  // namespace dope

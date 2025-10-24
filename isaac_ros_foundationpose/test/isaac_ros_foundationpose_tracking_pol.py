@@ -23,6 +23,7 @@ TensorRT using a FoundationPose models, and the inference decoded into a series 
 """
 import os
 import pathlib
+import sys
 import time
 
 import cv2
@@ -34,31 +35,31 @@ from launch_ros.descriptions import ComposableNode
 import numpy as np
 import pytest
 import rclpy
-
 from sensor_msgs.msg import CameraInfo, Image
 from vision_msgs.msg import Detection3DArray
 
+# Add current directory to Python path for imports.
+sys.path.append(os.path.dirname(__file__))
+from generate_engines import generate_foundationpose_engines, get_engines  # noqa: E402, I100
 
-MESH_FILE_NAME = 'textured_simple.obj'
-
-REFINE_MODEL_NAME = 'dummy_refine_model.onnx'
-REFINE_ENGINE_NAME = 'dummy_refine_trt_engine.plan'
-SCORE_MODEL_NAME = 'dummy_score_model.onnx'
-SCORE_ENGINE_NAME = 'dummy_score_trt_engine.plan'
-
-REFINE_ENGINE_PATH = '/tmp/' + REFINE_ENGINE_NAME
-SCORE_ENGINE_PATH = '/tmp/' + SCORE_ENGINE_NAME
 
 MODEL_GENERATION_TIMEOUT_SEC = 900
 INIT_WAIT_SEC = 10
 DELTA = 0.05
 
+MESH_FILE_NAME = 'textured_simple.obj'
+
 
 @pytest.mark.rostest
 def generate_test_description():
+    # Generate engine files
+    generate_foundationpose_engines()
+
+    # Get engines info from utils
+    engines = get_engines()
 
     selector_node = ComposableNode(
-        name='foundationpose',
+        name='foundationpose_selector',
         package='isaac_ros_foundationpose',
         plugin='nvidia::isaac_ros::foundationpose::Selector',
         namespace=IsaacROSFoundationPosePOLTest.generate_namespace(),
@@ -76,16 +77,16 @@ def generate_test_description():
                 '/test_cases/foundationpose/' + MESH_FILE_NAME,
 
             'refine_model_file_path':  os.path.dirname(__file__) +
-                '/../../test/models/' + REFINE_MODEL_NAME,
-            'refine_engine_file_path': REFINE_ENGINE_PATH,
+                '/../../test/models/' + engines['refine_model_name'],
+            'refine_engine_file_path': engines['refine_engine_path'],
             'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
             'refine_input_binding_names': ['input1', 'input2'],
             'refine_output_tensor_names': ['output_tensor1', 'output_tensor2'],
             'refine_output_binding_names': ['output1', 'output2'],
 
             'score_model_file_path':  os.path.dirname(__file__) +
-                '/../../test/models/' + SCORE_MODEL_NAME,
-            'score_engine_file_path': SCORE_ENGINE_PATH,
+                '/../../test/models/' + engines['score_model_name'],
+            'score_engine_file_path': engines['score_engine_path'],
             'score_input_tensor_names': ['input_tensor1', 'input_tensor2'],
             'score_input_binding_names': ['input1', 'input2'],
             'score_output_tensor_names': ['output_tensor'],
@@ -93,7 +94,7 @@ def generate_test_description():
         }])
 
     foundationpose_tracking_node = ComposableNode(
-        name='foundationpose',
+        name='foundationpose_tracking',
         package='isaac_ros_foundationpose',
         plugin='nvidia::isaac_ros::foundationpose::FoundationPoseTrackingNode',
         namespace=IsaacROSFoundationPosePOLTest.generate_namespace(),
@@ -102,8 +103,8 @@ def generate_test_description():
                 '/test_cases/foundationpose/' + MESH_FILE_NAME,
 
             'refine_model_file_path':  os.path.dirname(__file__) +
-                '/../../test/models/' + REFINE_MODEL_NAME,
-            'refine_engine_file_path': '/tmp/' + REFINE_ENGINE_NAME,
+                '/../../test/models/' + engines['refine_model_name'],
+            'refine_engine_file_path': engines['refine_engine_path'],
             'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
             'refine_input_binding_names': ['input1', 'input2'],
             'refine_output_tensor_names': ['output_tensor1', 'output_tensor2'],
@@ -128,13 +129,16 @@ class IsaacROSFoundationPosePOLTest(IsaacROSBaseTest):
 
     @IsaacROSBaseTest.for_each_test_case()
     def test_pol(self, test_folder):
+        # Get engines info from utils
+        engines = get_engines()
+
         self.node._logger.info(
             f'Generating model (timeout={MODEL_GENERATION_TIMEOUT_SEC}s)')
         start_time = time.time()
         wait_cycles = 1
         while (
-            not os.path.isfile(SCORE_ENGINE_PATH) or
-            not os.path.isfile(REFINE_ENGINE_PATH)
+            not os.path.isfile(engines['score_engine_path']) or
+            not os.path.isfile(engines['refine_engine_path'])
         ):
             time_diff = time.time() - start_time
             if time_diff > MODEL_GENERATION_TIMEOUT_SEC:

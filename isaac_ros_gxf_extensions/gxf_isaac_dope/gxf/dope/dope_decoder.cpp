@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -457,10 +457,26 @@ DopeDecoder::registerInterface(gxf::Registrar* registrar) noexcept {
       rotation_z_axis_, "rotation_z_axis", "rotation_z_axis",
       "Rotate Dope pose by N degrees along z axis", 0.0);
 
+  result &= registrar->parameter(cuda_stream_pool_, "stream_pool", "Cuda Stream Pool",
+                                 "Instance of gxf::CudaStreamPool to allocate CUDA stream.");
+
   return gxf::ToResultCode(result);
 }
 
 gxf_result_t DopeDecoder::start() noexcept {
+  // Get cuda stream from stream pool
+  auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
+  if (!maybe_stream) { return gxf::ToResultCode(maybe_stream); }
+
+  cuda_stream_handle_ = std::move(maybe_stream.value());
+  if (!cuda_stream_handle_->stream()) {
+    GXF_LOG_ERROR("Allocated stream is not initialized!");
+    return GXF_FAILURE;
+  }
+  if (!cuda_stream_handle_.is_null()) {
+    cuda_stream_ = cuda_stream_handle_->stream().value();
+  }
+
   // Extract 3D coordinates of bounding cuboid + centroid from object dimensions
   auto dims = object_dimensions_param_.get();
   if (dims.size() != 3) {
@@ -538,13 +554,21 @@ gxf_result_t DopeDecoder::tick() noexcept {
 
     const cudaMemcpyKind operation = cudaMemcpyDeviceToHost;
     const cudaError_t cuda_error =
-        cudaMemcpy(maps[chan].data, belief_maps->pointer() + chan * stride,
-                   stride, operation);
+        cudaMemcpyAsync(maps[chan].data, belief_maps->pointer() + chan * stride,
+                   stride, operation, cuda_stream_);
 
     if (cuda_error != cudaSuccess) {
       GXF_LOG_ERROR("Failed to copy data to Matrix: %s (%s)",
                     cudaGetErrorName(cuda_error),
                     cudaGetErrorString(cuda_error));
+      return GXF_FAILURE;
+    }
+
+    auto cuda_sync_error = cudaStreamSynchronize(cuda_stream_);
+    if (cuda_sync_error != cudaSuccess) {
+      GXF_LOG_ERROR("Failed to synchronize stream: %s (%s)",
+                    cudaGetErrorName(cuda_sync_error),
+                    cudaGetErrorString(cuda_sync_error));
       return GXF_FAILURE;
     }
   }

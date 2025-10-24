@@ -41,7 +41,6 @@ class IsaacROSFoundationPoseTrackingLaunchFragment(IsaacROSLaunchFragment):
 
         # FoundationPose parameters
         mesh_file_path = LaunchConfiguration('mesh_file_path')
-        texture_path = LaunchConfiguration('texture_path')
         refine_engine_file_path = LaunchConfiguration('refine_engine_file_path')
         score_engine_file_path = LaunchConfiguration('score_engine_file_path')
         # RT-DETR parameters
@@ -238,7 +237,6 @@ class IsaacROSFoundationPoseTrackingLaunchFragment(IsaacROSLaunchFragment):
                 plugin='nvidia::isaac_ros::foundationpose::FoundationPoseNode',
                 parameters=[{
                     'mesh_file_path': mesh_file_path,
-                    'texture_path': texture_path,
 
                     'refine_engine_file_path': refine_engine_file_path,
                     'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
@@ -260,7 +258,6 @@ class IsaacROSFoundationPoseTrackingLaunchFragment(IsaacROSLaunchFragment):
                 plugin='nvidia::isaac_ros::foundationpose::FoundationPoseTrackingNode',
                 parameters=[{
                     'mesh_file_path': mesh_file_path,
-                    'texture_path': texture_path,
 
                     'refine_engine_file_path': refine_engine_file_path,
                     'refine_input_tensor_names': ['input_tensor1', 'input_tensor2'],
@@ -280,11 +277,6 @@ class IsaacROSFoundationPoseTrackingLaunchFragment(IsaacROSLaunchFragment):
                 'mesh_file_path',
                 default_value='',
                 description='The absolute file path to the mesh file'),
-
-            'texture_path': DeclareLaunchArgument(
-                'texture_path',
-                default_value='',
-                description='The absolute file path to the texture map'),
 
             'refine_engine_file_path': DeclareLaunchArgument(
                 'refine_engine_file_path',
