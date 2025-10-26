@@ -20,6 +20,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <rclcpp/time.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 
@@ -107,13 +108,18 @@ public:
       this->create_subscription<isaac_ros_tensor_list_interfaces::msg::TensorList>(
       "pose_estimation/pose_matrix_output", 1, std::bind(&Selector::poseResetCallback, this, _1));
 
+    // Create subscriber for reset requests
+    reset_request_sub_ =
+      this->create_subscription<std_msgs::msg::Empty>(
+      "reset", 1, std::bind(&Selector::resetRequestCallback, this, _1));
+
     // reset period in ms after which pose estimation will be triggered
     this->declare_parameter<int>("reset_period", 20000);
     this->get_parameter("reset_period", reset_period_);
 
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(reset_period_),
-      std::bind(&Selector::timerCallback, this));
+      std::bind(&Selector::resetCallback, this));
   }
 
   void selectionCallback(
@@ -159,7 +165,14 @@ public:
     state_ = kTracking;
   }
 
-  void timerCallback()
+  void resetRequestCallback(const std_msgs::msg::Empty::ConstSharedPtr & request_msg)
+  {
+    (void) request_msg; // Supress unused parameter warning
+
+    resetCallback();
+  }
+
+  void resetCallback()
   {
     std::unique_lock<std::mutex> lock(mutex_);
     state_ = State::kPoseEstimation;
@@ -197,6 +210,8 @@ private:
     tracking_output_sub_;
   rclcpp::Subscription<isaac_ros_tensor_list_interfaces::msg::TensorList>::SharedPtr
     pose_estimation_output_sub_;
+
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr reset_request_sub_;
 
   enum State
   {

@@ -46,6 +46,7 @@
 
   <depend>message_filters</depend>
   <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>vision_msgs</depend>
   <depend>assimp</depend>
