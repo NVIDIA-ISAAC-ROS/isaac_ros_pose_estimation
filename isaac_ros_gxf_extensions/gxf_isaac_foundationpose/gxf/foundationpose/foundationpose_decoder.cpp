@@ -17,7 +17,7 @@
 
 #include "foundationpose_decoder.hpp"
 
-#include "detection3_d_array_message.hpp"
+#include "detection3_d_array_message/detection3_d_array_message.hpp"
 #include "foundationpose_decoder.cu.hpp"
 #include "foundationpose_utils.hpp"
 #include "gxf/core/parameter_parser_std.hpp"

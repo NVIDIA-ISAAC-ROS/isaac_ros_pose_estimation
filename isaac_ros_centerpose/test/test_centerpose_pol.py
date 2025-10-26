@@ -94,7 +94,8 @@ def generate_test_description():
                                      'kps_heatmap_mean'],
             'output_tensor_formats': ['nitros_tensor_list_nhwc_rgb_f32'],
             'verbose': False,
-            'force_engine_update': False
+            'force_engine_update': False,
+            'max_workspace_size': 512*1024*1024,  # 512MB
         }],
     )
 

@@ -607,11 +607,12 @@ gxf_result_t FoundationposeRender::NvdiffrastRender(
     CHECK_CUDA_ERRORS(cudaGetLastError());
   } else {
     auto float_texture_map_data = float_texture_map_tensor_.exportData<nvcv::TensorDataStridedCuda>();
+    // The texture map is a list of vertex colors, needs broadcasting in interpolate to avoid illegal memory access
     interpolate(
         cuda_stream,
         reinterpret_cast<float*>(float_texture_map_data->basePtr()), rast_out_device_, mesh_data_ptr->mesh_faces_device, color_device_,
         mesh_data_ptr->num_vertices, mesh_data_ptr->num_faces, kVertexPoints,
-        H, W, N);
+        H, W, N, 1);
     CHECK_CUDA_ERRORS(cudaGetLastError());
   }
 
@@ -833,7 +834,11 @@ gxf_result_t FoundationposeRender::tick() noexcept {
   // Get mesh data from sampling component if not already set
   auto mesh_data_ptr = mesh_storage_.get()->GetMeshData();
 
-  if (float_texture_map_tensor_.empty() || texture_path_cache_ != mesh_data_ptr->texture_path) {
+  // For pure color texture (vertex colors), we can reuse the cached version if the size matches
+  if (float_texture_map_tensor_.empty() || texture_path_cache_ != mesh_data_ptr->texture_path
+      || mesh_data_ptr->texture_map_height != float_texture_map_tensor_.shape()[1]
+      || mesh_data_ptr->texture_map_width != float_texture_map_tensor_.shape()[2]
+      || mesh_data_ptr->texture_map_channels != float_texture_map_tensor_.shape()[3]) {
     NormalizeImage(
       cuda_stream_,
       mesh_data_ptr->texture_map_device, 

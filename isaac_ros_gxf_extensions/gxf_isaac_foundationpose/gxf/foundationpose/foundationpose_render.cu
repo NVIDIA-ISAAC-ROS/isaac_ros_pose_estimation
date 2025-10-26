@@ -233,6 +233,9 @@ __global__ void pose_clip_kernel_fused(
         result = matrix_vec_mul4x4(shared_bbox, result);
 
         *transformed_matrix = result;
+
+        // Make sure all threads have read the shared memory before thread 0 writes to it in the next iteration
+        __syncthreads();
     }
 }
 
@@ -330,7 +333,7 @@ void rasterize(
 
 void interpolate(
     cudaStream_t stream, float* attr_ptr, float* rast_ptr, int32_t* tri_ptr, float* out, int num_vertices,
-    int num_triangles, int attr_dim, int H, int W, int C) {
+    int num_triangles, int attr_dim, int H, int W, int C, int attr_bc) {
   int instance_mode = attr_dim > 2 ? 1 : 0;
 
   InterpolateKernelParams p = {};  // Initialize all fields to zero.
@@ -346,7 +349,7 @@ void interpolate(
   p.attr = attr_ptr;
   p.rast = rast_ptr;
   p.tri = tri_ptr;
-  p.attrBC = 0;
+  p.attrBC = attr_bc;
   p.out = out;
 
   // Choose launch parameters.

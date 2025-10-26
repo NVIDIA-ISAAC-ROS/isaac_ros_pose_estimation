@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "extensions/centerpose/components/centerpose_visualizer.hpp"
 
+#include <utility>
 #include <vector>
 
 #include "cuda.h"          // NOLINT
@@ -38,7 +39,8 @@ namespace {
 
 gxf::Expected<void> CopyVideoBuffer(
     gxf::Handle<gxf::VideoBuffer> output_video_buffer,
-    gxf::Handle<gxf::VideoBuffer> input_video_buffer) {
+    gxf::Handle<gxf::VideoBuffer> input_video_buffer,
+    const cudaStream_t cuda_stream_) {
   cudaMemcpyKind operation;
   switch (input_video_buffer->storage_type()) {
     case gxf::MemoryStorageType::kDevice: {
@@ -52,14 +54,21 @@ gxf::Expected<void> CopyVideoBuffer(
       return gxf::Unexpected{GXF_PARAMETER_OUT_OF_RANGE};
     } break;
   }
-
-  cudaError_t error = cudaMemcpy(
+  // Add cuda stream here aboveand make it an async function call
+  cudaError_t error = cudaMemcpyAsync(
       output_video_buffer->pointer(), input_video_buffer->pointer(), input_video_buffer->size(),
-      operation);
+      operation, cuda_stream_);
   if (error != cudaSuccess) {
     GXF_LOG_ERROR("%s: %s", cudaGetErrorName(error), cudaGetErrorString(error));
     return gxf::Unexpected{GXF_FAILURE};
   }
+
+  error = cudaStreamSynchronize(cuda_stream_);
+  if (error != cudaSuccess) {
+    GXF_LOG_ERROR("%s: %s", cudaGetErrorName(error), cudaGetErrorString(error));
+    return gxf::Unexpected{GXF_FAILURE};
+  }
+
   return gxf::Success;
 }
 
@@ -177,9 +186,9 @@ gxf::Expected<void> DrawDetections(
     DrawBoundingBox(reprojected_points, bounding_box_color, img);
 
     if (show_axes) {
-      Eigen::Vector3f points_3d_cam_mean = points_3d_cam.colwise().mean();
+      Eigen::Vector3f points_3d_cam_mean = points_3d_cam.colwise().mean().transpose();
       Eigen::MatrixXfRM keypoints3d(1 + points_3d_cam.rows(), points_3d_cam.cols());
-      keypoints3d << points_3d_cam_mean.transpose(), points_3d_cam;
+      keypoints3d << points_3d_cam_mean, points_3d_cam;
       DrawAxes(keypoints3d, camera_matrix_eigen, img);
     }
   }
@@ -213,10 +222,27 @@ gxf_result_t CenterPoseVisualizer::registerInterface(gxf::Registrar* registrar) 
   result &= registrar->parameter(allocator_, "allocator");
   result &= registrar->parameter(show_axes_, "show_axes");
   result &= registrar->parameter(bounding_box_color_, "bounding_box_color");
+  result &= registrar->parameter(
+      cuda_stream_pool_, "stream_pool", "Cuda Stream Pool",
+      "Instance of gxf::CudaStreamPool to allocate CUDA stream.");
   return gxf::ToResultCode(result);
 }
 
 gxf_result_t CenterPoseVisualizer::start() {
+  // Get cuda stream from stream pool
+  auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
+  if (!maybe_stream) {
+    return gxf::ToResultCode(maybe_stream);
+  }
+
+  cuda_stream_handle_ = std::move(maybe_stream.value());
+  if (!cuda_stream_handle_->stream()) {
+    GXF_LOG_ERROR("Allocated stream is not initialized!");
+    return GXF_FAILURE;
+  }
+  if (!cuda_stream_handle_.is_null()) {
+    cuda_stream_ = cuda_stream_handle_->stream().value();
+  }
   return GXF_SUCCESS;
 }
 
@@ -277,7 +303,7 @@ gxf_result_t CenterPoseVisualizer::tick() {
     return gxf::ToResultCode(maybe_created_outputs);
   }
 
-  auto maybe_copied = CopyVideoBuffer(output_video_buffer, input_video_buffer);
+  auto maybe_copied = CopyVideoBuffer(output_video_buffer, input_video_buffer, cuda_stream_);
   if (!maybe_copied) {
     return gxf::ToResultCode(maybe_copied);
   }

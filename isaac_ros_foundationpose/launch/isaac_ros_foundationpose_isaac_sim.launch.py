@@ -43,7 +43,7 @@ ISAAC_ROS_FP_MESHES_PATH = os.path.join(ISAAC_ROS_ASSETS_PATH,
                                         'isaac_ros_foundationpose')
 STEREO_DISPARITY_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH,
                                             'dnn_stereo_disparity',
-                                            'dnn_stereo_disparity_v4.1.0_onnx')
+                                            'dnn_stereo_disparity_v4.1.0_onnx_trt10.13')
 SYNTHETICA_DETR_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'synthetica_detr')
 FOUDNATIONPOSE_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'foundationpose')
 REFINE_ENGINE_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'refine_trt_engine.plan')

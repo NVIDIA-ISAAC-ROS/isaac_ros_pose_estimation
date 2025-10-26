@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 
 <!--
- SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_foundationpose</name>
-  <version>3.2.10</version>
+  <version>4.0.0</version>
   <description>FoundationPose 6D pose estimation</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -32,6 +32,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <build_depend>eigen</build_depend>
+  <build_depend>ament_index_cpp</build_depend>
 
   <depend>cv_bridge</depend>
 
@@ -41,6 +42,7 @@
   <depend>isaac_ros_nitros_detection3_d_array_type</depend>
   <depend>isaac_ros_tensor_list_interfaces</depend>
   <depend>isaac_ros_nitros_point_cloud_type</depend>
+  <depend>isaac_ros_foundationpose_models_install</depend>
 
   <depend>message_filters</depend>
   <depend>rclcpp</depend>

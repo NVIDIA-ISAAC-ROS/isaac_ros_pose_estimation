@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 #include "extensions/centerpose/components/centerpose_detection_to_isaac.hpp"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "detection3_d_array_message.hpp"
@@ -40,7 +41,8 @@ struct PointerView {
 };
 
 template <typename T>
-gxf::Expected<std::vector<T>> ToVector(gxf::Handle<gxf::Tensor> tensor) {
+gxf::Expected<std::vector<T>> ToVector(
+    gxf::Handle<gxf::Tensor> tensor, const cudaStream_t cuda_stream_) {
   std::vector<T> vec;
   vec.resize(tensor->size() / sizeof(T));
   switch (tensor->storage_type()) {
@@ -49,8 +51,9 @@ gxf::Expected<std::vector<T>> ToVector(gxf::Handle<gxf::Tensor> tensor) {
       std::memcpy(vec.data(), tensor->pointer(), tensor->size());
     } break;
     case gxf::MemoryStorageType::kDevice: {
-      const cudaError_t cuda_error =
-          cudaMemcpy(vec.data(), tensor->pointer(), tensor->size(), cudaMemcpyDeviceToHost);
+      // Add cuda stream here aboveand make it an async function call
+      const cudaError_t cuda_error = cudaMemcpyAsync(
+          vec.data(), tensor->pointer(), tensor->size(), cudaMemcpyDeviceToHost, cuda_stream_);
       if (cuda_error != cudaSuccess) {
         GXF_LOG_ERROR(
             "Failed to transfer memory from device to host: %s", cudaGetErrorString(cuda_error));
@@ -100,7 +103,7 @@ gxf::Expected<void> ToDetection3DList(
     Detection3DListMessageParts message, gxf::Handle<gxf::Tensor> class_id_tensor,
     gxf::Handle<gxf::Tensor> position_tensor, gxf::Handle<gxf::Tensor> quaternion_tensor,
     gxf::Handle<gxf::Tensor> score_tensor, gxf::Handle<gxf::Tensor> bbox_size_tensor,
-    const std::string& object_name) {
+    const std::string& object_name, const cudaStream_t cuda_stream) {
   PointerView<int64_t> class_ids_view;
   PointerView<float> positions_view;
   PointerView<float> quaternions_view;
@@ -113,19 +116,25 @@ gxf::Expected<void> ToDetection3DList(
 
   switch (class_id_tensor->storage_type()) {
     case gxf::MemoryStorageType::kDevice: {
-      auto maybe_vector_result = ToVector<int64_t>(class_id_tensor)
-                                     .assign_to(class_ids)
-                                     .and_then([&]() { return ToVector<float>(position_tensor); })
-                                     .assign_to(positions)
-                                     .and_then([&]() { return ToVector<float>(quaternion_tensor); })
-                                     .assign_to(quaternions)
-                                     .and_then([&]() { return ToVector<float>(score_tensor); })
-                                     .assign_to(scores)
-                                     .and_then([&]() { return ToVector<float>(bbox_size_tensor); })
-                                     .assign_to(bbox_sizes);
+      auto maybe_vector_result =
+          ToVector<int64_t>(class_id_tensor, cuda_stream)
+              .assign_to(class_ids)
+              .and_then([&]() { return ToVector<float>(position_tensor, cuda_stream); })
+              .assign_to(positions)
+              .and_then([&]() { return ToVector<float>(quaternion_tensor, cuda_stream); })
+              .assign_to(quaternions)
+              .and_then([&]() { return ToVector<float>(score_tensor, cuda_stream); })
+              .assign_to(scores)
+              .and_then([&]() { return ToVector<float>(bbox_size_tensor, cuda_stream); })
+              .assign_to(bbox_sizes);
       if (!maybe_vector_result) {
         GXF_LOG_ERROR("Failed to convert tensors into vectors!");
         return gxf::ForwardError(maybe_vector_result);
+      }
+      auto cuda_error = cudaStreamSynchronize(cuda_stream);
+      if (cuda_error != cudaSuccess) {
+        GXF_LOG_ERROR("Failed to synchronize stream: %s", cudaGetErrorString(cuda_error));
+        return gxf::Unexpected{GXF_FAILURE};
       }
       class_ids_view = PointerView<int64_t>{class_ids};
       positions_view = PointerView<float>{positions};
@@ -157,10 +166,27 @@ gxf_result_t CenterPoseDetectionToIsaac::registerInterface(gxf::Registrar* regis
   result &= registrar->parameter(output_, "output", "Output", "The output");
   result &= registrar->parameter(
       object_name_, "object_name", "Object Name", "The name of the object detected");
+  result &= registrar->parameter(
+      cuda_stream_pool_, "stream_pool", "Cuda Stream Pool",
+      "Instance of gxf::CudaStreamPool to allocate CUDA stream.");
   return gxf::ToResultCode(result);
 }
 
 gxf_result_t CenterPoseDetectionToIsaac::start() {
+  // Get cuda stream from stream pool
+  auto maybe_stream = cuda_stream_pool_.get()->allocateStream();
+  if (!maybe_stream) {
+    return gxf::ToResultCode(maybe_stream);
+  }
+
+  cuda_stream_handle_ = std::move(maybe_stream.value());
+  if (!cuda_stream_handle_->stream()) {
+    GXF_LOG_ERROR("Allocated stream is not initialized!");
+    return GXF_FAILURE;
+  }
+  if (!cuda_stream_handle_.is_null()) {
+    cuda_stream_ = cuda_stream_handle_->stream().value();
+  }
   return GXF_SUCCESS;
 }
 
@@ -202,7 +228,7 @@ gxf_result_t CenterPoseDetectionToIsaac::tick() {
   if (class_id_tensor->shape().dimension(0) != 0) {
     auto maybe_result = ToDetection3DList(
         maybe_detection3_d_list.value(), class_id_tensor, position_tensor, quaternion_tensor,
-        score_tensor, bbox_size_tensor, object_name_.get());
+        score_tensor, bbox_size_tensor, object_name_.get(), cuda_stream_);
     if (!maybe_result) {
       GXF_LOG_ERROR("Failed to transfer data into Isaac!");
       return gxf::ToResultCode(maybe_result);
