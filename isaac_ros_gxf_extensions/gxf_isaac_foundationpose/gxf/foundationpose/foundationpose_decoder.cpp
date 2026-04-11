@@ -170,9 +170,10 @@ gxf_result_t FoundationposeDecoder::tick() noexcept {
       bytes_per_element, cudaMemcpyDeviceToHost, cuda_stream_));
   CHECK_CUDA_ERRORS(cudaStreamSynchronize(cuda_stream_));
   
-  // Add the distance from edge to the center because
+  // Undo mesh centering: vertices were stored as (v - center), so the
+  // API pose must map original vertices via t_api = t - R*center.
   Eigen::Matrix4f tf_to_center = Eigen::Matrix4f::Identity();
-  tf_to_center.block<3, 1>(0, 3) = mesh_data_ptr->mesh_model_center;
+  tf_to_center.block<3, 1>(0, 3) = -mesh_data_ptr->mesh_model_center;
   pose_matrix = pose_matrix * tf_to_center;
   
 
