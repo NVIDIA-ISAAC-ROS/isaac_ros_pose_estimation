@@ -19,14 +19,18 @@ import os
 import shutil
 import subprocess
 
+import tensorrt as trt
+
 
 # Model and engine configuration.
 MESH_FILE_NAME = 'textured_simple.obj'
 
+_TRT_VER = trt.__version__.replace('.', '_')
+
 REFINE_MODEL_NAME = 'dummy_refine_model.onnx'
-REFINE_ENGINE_NAME = 'dummy_refine_trt_engine.plan'
+REFINE_ENGINE_NAME = f'dummy_refine_trt_{_TRT_VER}_engine.plan'
 SCORE_MODEL_NAME = 'dummy_score_model.onnx'
-SCORE_ENGINE_NAME = 'dummy_score_trt_engine.plan'
+SCORE_ENGINE_NAME = f'dummy_score_trt_{_TRT_VER}_engine.plan'
 
 REFINE_ENGINE_PATH = '/tmp/' + REFINE_ENGINE_NAME
 SCORE_ENGINE_PATH = '/tmp/' + SCORE_ENGINE_NAME

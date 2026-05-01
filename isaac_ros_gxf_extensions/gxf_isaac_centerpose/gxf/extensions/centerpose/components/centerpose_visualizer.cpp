@@ -25,7 +25,7 @@
 #include "extensions/centerpose/components/centerpose_types.hpp"
 #include "extensions/centerpose/components/cuboid3d.hpp"
 #include "extensions/centerpose/components/video_buffer_utils.hpp"
-#include "detection3_d_array_message.hpp"
+#include "detection3_d_array_message/detection3_d_array_message.hpp"
 #include "gxf/multimedia/camera.hpp"
 #include "gxf/multimedia/video.hpp"
 #include "opencv2/core/eigen.hpp"

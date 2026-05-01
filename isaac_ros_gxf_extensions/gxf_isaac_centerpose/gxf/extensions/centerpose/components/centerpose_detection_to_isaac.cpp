@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-#include "detection3_d_array_message.hpp"
+#include "detection3_d_array_message/detection3_d_array_message.hpp"
 #include "gxf/std/tensor.hpp"
 
 namespace nvidia {
