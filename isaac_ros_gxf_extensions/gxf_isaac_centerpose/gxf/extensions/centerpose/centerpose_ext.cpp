@@ -17,7 +17,7 @@
 #include "extensions/centerpose/components/centerpose_detection_to_isaac.hpp"
 #include "extensions/centerpose/components/centerpose_postprocessor.hpp"
 #include "extensions/centerpose/components/centerpose_visualizer.hpp"
-#include "detection3_d_array_message.hpp"
+#include "detection3_d_array_message/detection3_d_array_message.hpp"
 #include "gxf/std/extension_factory_helper.hpp"
 
 GXF_EXT_FACTORY_BEGIN()

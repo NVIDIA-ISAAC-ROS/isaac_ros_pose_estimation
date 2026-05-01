@@ -36,13 +36,14 @@ import pytest
 import rclpy
 
 from sensor_msgs.msg import CameraInfo, Image
+import tensorrt as trt
 from vision_msgs.msg import Detection3DArray
 
 MODEL_FILE_NAME = 'dope_ketchup_pol.onnx'
 
 MODEL_GENERATION_TIMEOUT_SEC = 300
 INIT_WAIT_SEC = 10
-MODEL_PATH = '/tmp/dope_trt_engine.plan'
+MODEL_PATH = f'/tmp/dope_trt_{trt.__version__.replace(".", "_")}_engine.plan'
 
 
 @pytest.mark.rostest
