@@ -24,14 +24,17 @@
 #include <vector>
 
 #include "geometry_msgs/msg/pose_array.hpp"
-#include "isaac_ros_nitros/nitros_node.hpp"
+#include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
 #include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
 #include "isaac_ros_tensor_list_interfaces/msg/tensor_list.hpp"
+#include "message_filters/subscriber.h"
+#include "message_filters/sync_policies/exact_time.h"
+#include "message_filters/synchronizer.h"
 #include "opencv2/core.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/camera_info.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "vision_msgs/msg/detection3_d_array.hpp"
-#include "sensor_msgs/msg/camera_info.hpp"
 
 namespace nvidia
 {
@@ -95,6 +98,7 @@ private:
 
   rclcpp::QoS input_qos_;
   rclcpp::QoS output_qos_;
+  int16_t input_queue_size_;
 
   // The transform broadcaster for when TF publishing for poses is enabled
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -102,8 +106,13 @@ private:
   // CUDA resources
   ::nvidia::isaac_ros::common::CudaStreamPtr cuda_stream_;
 
-  // Subscription to input NitrosTensorList messages
-  rclcpp::Subscription<nvidia::isaac_ros::nitros::NitrosTensorList>::SharedPtr nitros_sub_;
+  // NITROS-aware synchronization of belief-map and adjusted CameraInfo inputs
+  ::message_filters::Subscriber<nvidia::isaac_ros::nitros::NitrosTensorList> tensor_sub_;
+  ::message_filters::Subscriber<sensor_msgs::msg::CameraInfo> camera_info_sub_;
+  using ExactPolicy = ::message_filters::sync_policies::ExactTime<
+    nvidia::isaac_ros::nitros::NitrosTensorList,
+    sensor_msgs::msg::CameraInfo>;
+  ::message_filters::Synchronizer<ExactPolicy> exact_sync_;
 
   // Publisher for output Detection3DArray messages
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr detections_pub_;

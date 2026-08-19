@@ -130,7 +130,7 @@ def generate_launch_description():
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     dope_encoder_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder_nodes.launch.py')]
         ),
         launch_arguments={
             'input_image_width': input_image_width,

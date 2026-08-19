@@ -101,6 +101,10 @@ def generate_launch_description():
             default_value='False',
             description='Whether TensorRT should update the TensorRT engine file or not'),
         DeclareLaunchArgument(
+            'max_workspace_size',
+            default_value='536870912',
+            description='The TensorRT builder workspace size in bytes'),
+        DeclareLaunchArgument(
             'map_peak_threshold',
             default_value='0.1',
             description='The minimum value of a peak in a DOPE belief map'),
@@ -129,6 +133,7 @@ def generate_launch_description():
     output_tensor_formats = LaunchConfiguration('output_tensor_formats')
     tensorrt_verbose = LaunchConfiguration('tensorrt_verbose')
     force_engine_update = LaunchConfiguration('force_engine_update')
+    max_workspace_size = LaunchConfiguration('max_workspace_size')
 
     # DOPE Decoder parameters
     object_name = LaunchConfiguration('object_name')
@@ -138,7 +143,7 @@ def generate_launch_description():
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     dope_encoder_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder_nodes.launch.py')]
         ),
         launch_arguments={
             'input_image_width': input_image_width,
@@ -184,7 +189,8 @@ def generate_launch_description():
             'output_binding_names': output_binding_names,
             'output_tensor_formats': output_tensor_formats,
             'verbose': tensorrt_verbose,
-            'force_engine_update': force_engine_update
+            'force_engine_update': force_engine_update,
+            'max_workspace_size': max_workspace_size,
         }])
 
     dope_decoder_node = ComposableNode(

@@ -26,7 +26,7 @@
 #include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_common/cuda_stream.hpp"
 #include "isaac_ros_nitros_image_type/nitros_image.hpp"
-#include "isaac_ros_nitros_camera_info_type/nitros_camera_info.hpp"
+#include "sensor_msgs/msg/camera_info.hpp"
 #include "vision_msgs/msg/detection3_d_array.hpp"
 #include "vision_msgs/msg/detection3_d.hpp"
 #include "vision_msgs/msg/object_hypothesis_with_pose.hpp"
@@ -220,14 +220,16 @@ void DrawDetections(
 CenterPoseVisualizerNode::CenterPoseVisualizerNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("centerpose_visualizer", options),
   show_axes_{declare_parameter<bool>("show_axes", true)},
-  bounding_box_color_{declare_parameter<int32_t>(
-      "bounding_box_color",
-      static_cast<int32_t>(0x000000ff))},
-  memory_pool_block_size_(declare_parameter<int64_t>("memory_pool_block_size",
-    3 * 1024 * 1024 * 4)),
-  memory_pool_num_blocks_(declare_parameter<int64_t>("memory_pool_num_blocks", 40)),
-  input_queue_size_(declare_parameter<int16_t>("input_queue_size", 10)),
-  output_queue_size_(declare_parameter<int16_t>("output_queue_size", 10)),
+  bounding_box_color_{static_cast<int32_t>(declare_parameter<int32_t>(
+      "bounding_box_color", int32_t{0x000000ff}))},
+  memory_pool_block_size_{declare_parameter<int64_t>(
+    "memory_pool_block_size", static_cast<int64_t>(3) * 1024 * 1024 * 4)},
+  memory_pool_num_blocks_{declare_parameter<int64_t>(
+    "memory_pool_num_blocks", int64_t{40})},
+  input_queue_size_{static_cast<int16_t>(declare_parameter<int>(
+    "input_queue_size", 10))},
+  output_queue_size_{static_cast<int16_t>(declare_parameter<int>(
+    "output_queue_size", 10))},
   image_sub_{},
   detection3darray_sub_{},
   camera_info_sub_{},
