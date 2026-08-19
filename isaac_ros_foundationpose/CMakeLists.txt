@@ -95,6 +95,7 @@ set_target_properties(foundationpose_pipeline PROPERTIES
 
 # FoundationPose node
 ament_auto_add_library(foundationpose_node SHARED src/foundationpose_node.cpp)
+ament_target_dependencies(foundationpose_node rclcpp_components)
 target_link_libraries(foundationpose_node foundationpose_pipeline)
 target_link_libraries(foundationpose_node "${cpp_typesupport_target}")
 rclcpp_components_register_nodes(foundationpose_node "nvidia::isaac_ros::foundationpose::FoundationPoseNode")
@@ -108,6 +109,7 @@ set_target_properties(foundationpose_node PROPERTIES
 
 # FoundationPose Tracking node
 ament_auto_add_library(foundationpose_tracking_node SHARED src/foundationpose_tracking_node.cpp)
+ament_target_dependencies(foundationpose_tracking_node rclcpp_components)
 target_link_libraries(foundationpose_tracking_node foundationpose_pipeline)
 target_link_libraries(foundationpose_tracking_node "${cpp_typesupport_target}")
 rclcpp_components_register_nodes(foundationpose_tracking_node "nvidia::isaac_ros::foundationpose::FoundationPoseTrackingNode")
@@ -116,16 +118,19 @@ set(node_plugins
 
 # Detection2DArrayFilter utils node
 ament_auto_add_library(detection2_d_array_filter SHARED src/detection2_d_array_filter.cpp)
+ament_target_dependencies(detection2_d_array_filter rclcpp_components)
 rclcpp_components_register_nodes(detection2_d_array_filter "nvidia::isaac_ros::foundationpose::Detection2DArrayFilter")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::foundationpose::Detection2DArrayFilter;$<TARGET_FILE:detection2_d_array_filter>\n")
 
 # Detection2DToMask utils node
 ament_auto_add_library(detection2_d_to_mask SHARED src/detection2_d_to_mask.cpp)
+ament_target_dependencies(detection2_d_to_mask rclcpp_components)
 rclcpp_components_register_nodes(detection2_d_to_mask "nvidia::isaac_ros::foundationpose::Detection2DToMask")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::foundationpose::Detection2DToMask;$<TARGET_FILE:detection2_d_to_mask>\n")
 
 # Tracking selector node
 ament_auto_add_library(foundationpose_selector_node SHARED src/foundationpose_selector_node.cpp)
+ament_target_dependencies(foundationpose_selector_node rclcpp_components)
 rclcpp_components_register_nodes(foundationpose_selector_node "nvidia::isaac_ros::foundationpose::Selector")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::foundationpose::Selector;$<TARGET_FILE:foundationpose_selector_node>\n")
 

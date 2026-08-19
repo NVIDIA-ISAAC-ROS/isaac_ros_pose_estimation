@@ -21,6 +21,7 @@ Basic Proof-Of-Life test for the Isaac ROS Deep Object Pose Estimation (DOPE) No
 This test checks that an image can be encoder into a tensor, run through
 TensorRT using a DOPE model, and the inference decoded into a series of poses.
 """
+import math
 import os
 import pathlib
 import time
@@ -77,7 +78,8 @@ def generate_test_description():
             'frame_id': 'map'
         }],
         remappings=[('belief_map_array', 'tensor_sub'),
-                    ('dope/detections', 'detections')])
+                    ('dope/detections', 'detections'),
+                    ('camera_info', 'crop/camera_info')])
 
     image_format_converter_node = ComposableNode(
         name='image_format_converter',
@@ -95,7 +97,7 @@ def generate_test_description():
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     dope_encoder_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder_nodes.launch.py')]
         ),
         launch_arguments={
             'input_image_width': '852',
@@ -108,6 +110,7 @@ def generate_test_description():
             'dnn_image_encoder_namespace': IsaacROSDopePOLTest.generate_namespace(),
             'tensor_output_topic': 'tensor_pub',
             'image_input_topic': 'image_rgb',
+            'camera_info_input_topic': 'camera_info',
         }.items(),
     )
 
@@ -188,6 +191,17 @@ class IsaacROSDopePOLTest(IsaacROSBaseTest):
             self.node._logger.info(f'Detections received: {received_detections}')
             self.assertGreaterEqual(len(received_detections), 1,
                                     'Did not receive at least one detection')
+            for detection in received_detections:
+                position = detection.bbox.center.position
+                orientation = detection.bbox.center.orientation
+                self.assertTrue(all(math.isfinite(value) for value in [
+                    position.x, position.y, position.z,
+                    orientation.x, orientation.y, orientation.z, orientation.w,
+                ]), 'Detection pose contains a non-finite value')
+                self.assertGreater(detection.bbox.size.x, 0.0)
+                self.assertLess(detection.bbox.size.x, 1.0)
+                self.assertEqual(len(detection.results), 1)
+                self.assertEqual(detection.results[0].hypothesis.class_id, 'Ketchup')
 
         finally:
             self.node.destroy_subscription(subs)

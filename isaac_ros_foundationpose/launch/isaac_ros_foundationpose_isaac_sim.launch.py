@@ -16,6 +16,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import platform
 
 from ament_index_python.packages import get_package_share_directory
 import launch
@@ -43,12 +44,14 @@ ISAAC_ROS_FP_MESHES_PATH = os.path.join(ISAAC_ROS_ASSETS_PATH,
                                         'isaac_ros_foundationpose')
 STEREO_DISPARITY_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH,
                                             'dnn_stereo_disparity',
-                                            'dnn_stereo_disparity_v4.1.0_onnx_trt10.13')
+                                            'dnn_stereo_disparity_v4.1.0_onnx_trt10.16')
 SYNTHETICA_DETR_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'synthetica_detr')
 FOUDNATIONPOSE_MODELS_PATH = os.path.join(ISAAC_ROS_MODELS_PATH, 'foundationpose')
 REFINE_ENGINE_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'refine_trt_engine.plan')
 SCORE_ENGINE_PATH = os.path.join(FOUDNATIONPOSE_MODELS_PATH, 'score_trt_engine.plan')
 ESS_ENGINE_PATH = os.path.join(STEREO_DISPARITY_MODELS_PATH, 'light_ess.engine')
+ESS_PLUGIN_PATH = os.path.join(
+    STEREO_DISPARITY_MODELS_PATH, 'plugins', platform.machine(), 'ess_plugins.so')
 RTDETR_ENGINE_PATH = os.path.join(SYNTHETICA_DETR_MODELS_PATH, 'sdetr_grasp.plan')
 MESH_OBJ_PATH = os.path.join(ISAAC_ROS_FP_MESHES_PATH,
                              'Mac_and_cheese_0_1', 'Mac_and_cheese_0_1.obj')
@@ -94,6 +97,11 @@ def generate_launch_description():
             description='The absolute path to the ESS engine plan.'),
 
         DeclareLaunchArgument(
+            'ess_plugin_file_path',
+            default_value=ESS_PLUGIN_PATH,
+            description='The absolute path to the ESS TensorRT plugin library.'),
+
+        DeclareLaunchArgument(
             'ess_depth_threshold',
             default_value='0.4',
             description='Threshold value ranges between 0.0 and 1.0 '
@@ -116,6 +124,7 @@ def generate_launch_description():
     score_engine_file_path = LaunchConfiguration('score_engine_file_path')
     rt_detr_engine_file_path = LaunchConfiguration('rt_detr_engine_file_path')
     ess_depth_engine_file_path = LaunchConfiguration('ess_depth_engine_file_path')
+    ess_plugin_file_path = LaunchConfiguration('ess_plugin_file_path')
     ess_depth_threshold = LaunchConfiguration('ess_depth_threshold')
     launch_rviz = LaunchConfiguration('launch_rviz')
     container_name = LaunchConfiguration('container_name')
@@ -433,6 +442,7 @@ def generate_launch_description():
         remappings=[
             ('tensor1', 'ess_left/tensor_reshape'),
             ('tensor2', 'ess_right/tensor_reshape'),
+            ('tensor_pub', 'ess/tensor_pub'),
         ]
     )
 
@@ -448,7 +458,12 @@ def generate_launch_description():
             'output_binding_names': ['output_left', 'output_conf'],
             'verbose': False,
             'force_engine_update': False,
-        }]
+            'custom_plugin_lib': ess_plugin_file_path,
+        }],
+        remappings=[
+            ('tensor_pub', 'ess/tensor_pub'),
+            ('tensor_sub', 'ess/tensor_sub'),
+        ]
     )
 
     ess_decoder_node = ComposableNode(
@@ -459,8 +474,10 @@ def generate_launch_description():
             'disparity_tensor_name': 'output_left',
             'confidence_tensor_name': 'output_conf',
             'confidence_threshold': ess_depth_threshold,
+            'cache_camera_info': True,
         }],
         remappings=[
+            ('tensor_sub', 'ess/tensor_sub'),
             ('right/camera_info', 'front_stereo_camera/right/camera_info_resized')
         ]
     )

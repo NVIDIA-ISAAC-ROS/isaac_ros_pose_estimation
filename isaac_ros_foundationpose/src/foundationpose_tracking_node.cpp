@@ -57,8 +57,6 @@ FoundationPoseTrackingNode::FoundationPoseTrackingNode(rclcpp::NodeOptions optio
   min_pointcloud_support_(declare_parameter<int>("min_pointcloud_support", 50)),
   enable_auto_reset_(declare_parameter<bool>("enable_auto_reset", true))
 {
-  RCLCPP_INFO(get_logger(), "[FoundationPoseTrackingNode] Initializing GXF-free tracking node");
-
   const std::string package_directory = ament_index_cpp::get_package_share_directory(
     "isaac_ros_foundationpose");
   std::filesystem::path yaml_path =

@@ -28,7 +28,10 @@ namespace fs = std::experimental::filesystem;
 namespace fs = std::filesystem;
 #endif
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <functional>
 #include <string>
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
@@ -38,6 +41,7 @@ namespace fs = std::filesystem;
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "vision_msgs/msg/detection3_d_array.hpp"
+#include "vision_msgs/msg/object_hypothesis_with_pose.hpp"
 
 namespace nvidia
 {
@@ -51,6 +55,7 @@ namespace
 // determined by the output size of the DOPE DNN.
 constexpr size_t kInputMapsChannels = 25;
 constexpr size_t kNumTensors = 1;
+constexpr char kCameraInfoTopicName[] = "camera_info";
 // The dimensions of the output pose array tensor:
 // position (xyz) and orientation (quaternion, xyzw)
 constexpr int kExpectedPoseAsTensorSize = (3 + 4);
@@ -412,7 +417,12 @@ DopeDecoderNode::DopeDecoderNode(const rclcpp::NodeOptions & options)
   object_dimensions_{},
   camera_matrix_{},
   input_qos_(::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "input_qos")),
-  output_qos_(::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos"))
+  output_qos_(::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos")),
+  input_queue_size_(declare_parameter<int16_t>("input_queue_size", 10)),
+  tensor_sub_{},
+  camera_info_sub_{},
+  exact_sync_{
+    ExactPolicy(static_cast<uint32_t>(input_queue_size_)), tensor_sub_, camera_info_sub_}
 {
   RCLCPP_DEBUG(get_logger(), "[DopeDecoderNode] Constructor");
 
@@ -426,15 +436,13 @@ DopeDecoderNode::DopeDecoderNode(const rclcpp::NodeOptions & options)
   sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
   rclcpp::PublisherOptions pub_options;
   pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
-  // Register subscription to the input NitrosTensorList topic and set the callback
-  nitros_sub_ = create_subscription<nvidia::isaac_ros::nitros::NitrosTensorList>(
-    INPUT_TOPIC_NAME,
-    input_qos_,
-    [this](const nvidia::isaac_ros::nitros::NitrosTensorList::ConstSharedPtr & msg) {
-      // Camera intrinsics are optional for this path; subscribe to camera_info separately if
-      // you need them synchronized with tensors.
-      DopeDecoderDetectionCallback(msg, nullptr);
-    }, sub_options);
+  exact_sync_.registerCallback(
+    std::bind(
+      &DopeDecoderNode::DopeDecoderDetectionCallback, this,
+      std::placeholders::_1, std::placeholders::_2));
+  const auto input_qos_profile = input_qos_.get_rmw_qos_profile();
+  tensor_sub_.subscribe(this, INPUT_TOPIC_NAME, input_qos_profile, sub_options);
+  camera_info_sub_.subscribe(this, kCameraInfoTopicName, input_qos_profile, sub_options);
 
   detections_pub_ = create_publisher<vision_msgs::msg::Detection3DArray>(
     OUTPUT_TOPIC_NAME, output_qos_, pub_options);
@@ -475,7 +483,12 @@ DopeDecoderNode::~DopeDecoderNode() {}
 bool DopeDecoderNode::UpdateCameraProperties(
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info)
 {
-  if (!camera_info) {
+  if (!camera_info ||
+    !std::isfinite(camera_info->k[0]) || camera_info->k[0] <= 0.0 ||
+    !std::isfinite(camera_info->k[2]) ||
+    !std::isfinite(camera_info->k[4]) || camera_info->k[4] <= 0.0 ||
+    !std::isfinite(camera_info->k[5]))
+  {
     return false;
   }
 
@@ -492,8 +505,9 @@ void DopeDecoderNode::DopeDecoderDetectionCallback(
   const nvidia::isaac_ros::nitros::NitrosTensorList::ConstSharedPtr & tensor_list,
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info)
 {
-  if (camera_info) {
-    UpdateCameraProperties(camera_info);
+  if (!UpdateCameraProperties(camera_info)) {
+    RCLCPP_ERROR(get_logger(), "CameraInfo has invalid intrinsics");
+    return;
   }
 
   auto belief_maps = tensor_list->get_tensor(0);
@@ -504,7 +518,8 @@ void DopeDecoderNode::DopeDecoderDetectionCallback(
 
   const nvidia::isaac_ros::nitros::ReadHandle handle = belief_maps.get_read_handle(*cuda_stream_);
   // Ensure belief maps match expected shape in first two dimensions
-  const auto & belief_maps_dims = belief_maps.shape().dims();
+  const nvidia::isaac_ros::nitros::NitrosTensorShape belief_maps_shape = belief_maps.shape();
+  const auto & belief_maps_dims = belief_maps_shape.dims();
   if (belief_maps_dims.size() < 4 ||
     belief_maps_dims.at(0) != static_cast<int32_t>(kNumTensors) ||
     belief_maps_dims.at(1) != static_cast<int32_t>(kInputMapsChannels))
@@ -539,17 +554,7 @@ void DopeDecoderNode::DopeDecoderDetectionCallback(
 
   // convert from NitrosTensorList to Detection3DArray message
   vision_msgs::msg::Detection3DArray detection3darray_message;
-  // Prefer CameraInfo header when available; otherwise fall back to tensor_list metadata.
-  if (camera_info) {
-    detection3darray_message.header = camera_info->header;
-  } else {
-    detection3darray_message.header.stamp.sec =
-      static_cast<int32_t>(tensor_list->get_timestamp_sec());
-    detection3darray_message.header.stamp.nanosec =
-      static_cast<uint32_t>(tensor_list->get_timestamp_nsec());
-    detection3darray_message.header.frame_id = tensor_list->get_frame_id();
-  }
-  detection3darray_message.detections.resize(dope_objects.size());
+  detection3darray_message.header = camera_info->header;
   if (dope_objects.empty()) {
     RCLCPP_DEBUG(get_logger(), "No objects detected.");
   }
@@ -559,17 +564,19 @@ void DopeDecoderNode::DopeDecoderDetectionCallback(
     const std::array<double, kExpectedPoseAsTensorSize> pose = ExtractPose(
       dope_objects.at(i), cuboid_3d_points_, cv_camera_matrix_,
       rotation_y_axis_, rotation_x_axis_, rotation_z_axis_);
+    const bool pose_is_finite =
+      std::all_of(pose.cbegin(), pose.cend(), [](double value) {return std::isfinite(value);});
     const double q_norm_sq =
       pose[3] * pose[3] + pose[4] * pose[4] + pose[5] * pose[5] + pose[6] * pose[6];
-    if (q_norm_sq < 1e-20) {
+    if (!pose_is_finite || q_norm_sq < 1e-20) {
       RCLCPP_ERROR(get_logger(), "Failed to extract pose from object");
       continue;
     }
     vision_msgs::msg::Detection3D detection3d_message;
     detection3d_message.header = detection3darray_message.header;
-    detection3d_message.bbox.size.x = object_dimensions_.at(0);
-    detection3d_message.bbox.size.y = object_dimensions_.at(1);
-    detection3d_message.bbox.size.z = object_dimensions_.at(2);
+    detection3d_message.bbox.size.x = object_dimensions_.at(0) / kCentimeterToMeter;
+    detection3d_message.bbox.size.y = object_dimensions_.at(1) / kCentimeterToMeter;
+    detection3d_message.bbox.size.z = object_dimensions_.at(2) / kCentimeterToMeter;
     detection3d_message.bbox.center.position.x = pose[0];
     detection3d_message.bbox.center.position.y = pose[1];
     detection3d_message.bbox.center.position.z = pose[2];
@@ -577,6 +584,11 @@ void DopeDecoderNode::DopeDecoderDetectionCallback(
     detection3d_message.bbox.center.orientation.y = pose[4];
     detection3d_message.bbox.center.orientation.z = pose[5];
     detection3d_message.bbox.center.orientation.w = pose[6];
+    vision_msgs::msg::ObjectHypothesisWithPose object_hypothesis_message;
+    object_hypothesis_message.hypothesis.class_id = object_name_;
+    object_hypothesis_message.hypothesis.score = 0.0;
+    object_hypothesis_message.pose.pose = detection3d_message.bbox.center;
+    detection3d_message.results.push_back(object_hypothesis_message);
     detection3darray_message.detections.push_back(detection3d_message);
 
     if (enable_tf_publishing_) {

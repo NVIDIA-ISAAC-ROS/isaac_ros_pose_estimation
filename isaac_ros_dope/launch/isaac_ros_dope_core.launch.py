@@ -42,6 +42,7 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
         output_tensor_formats = LaunchConfiguration('output_tensor_formats')
         tensorrt_verbose = LaunchConfiguration('tensorrt_verbose')
         force_engine_update = LaunchConfiguration('force_engine_update')
+        max_workspace_size = LaunchConfiguration('max_workspace_size')
 
         # DOPE Decoder parameters
         object_name = LaunchConfiguration('object_name')
@@ -74,7 +75,8 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                     'output_binding_names': output_binding_names,
                     'output_tensor_formats': output_tensor_formats,
                     'verbose': tensorrt_verbose,
-                    'force_engine_update': force_engine_update
+                    'force_engine_update': force_engine_update,
+                    'max_workspace_size': max_workspace_size,
                 }]
             ),
             'dope_decoder_node': ComposableNode(
@@ -171,13 +173,17 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                 'force_engine_update',
                 default_value='False',
                 description='Whether TensorRT should update the TensorRT engine file or not'),
+            'max_workspace_size': DeclareLaunchArgument(
+                'max_workspace_size',
+                default_value='536870912',
+                description='The TensorRT builder workspace size in bytes'),
             'enable_tf_publishing': DeclareLaunchArgument(
                 'enable_tf_publishing',
                 default_value='False',
                 description='Whether Dope Decoder will broadcast poses to the TF tree or not'),
             'dope_encoder_launch': IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
+                    [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder_nodes.launch.py')]
                 ),
                 launch_arguments={
                     'input_image_width': str(interface_specs['camera_resolution']['width']),

@@ -62,8 +62,6 @@ FoundationPoseNode::FoundationPoseNode(rclcpp::NodeOptions options)
   fixed_axis_angles_(declare_parameter<StringList>("fixed_axis_angles", StringList{})),
   fixed_translations_(declare_parameter<StringList>("fixed_translations", StringList{}))
 {
-  RCLCPP_INFO(get_logger(), "[FoundationPoseNode] Initializing GXF-free node");
-
   const std::string package_directory = ament_index_cpp::get_package_share_directory(
     "isaac_ros_foundationpose");
   std::filesystem::path yaml_path =
