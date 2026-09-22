@@ -28,6 +28,7 @@
 #include "Eigen/Dense"
 
 #include "isaac_ros_foundationpose/foundationpose_impl/mesh_loader.hpp"
+#include "isaac_ros_foundationpose/foundationpose_impl/pose_transformer.hpp"
 #include "vision_msgs/msg/detection3_d_array.hpp"
 
 namespace nvidia
@@ -36,6 +37,19 @@ namespace isaac_ros
 {
 namespace foundationpose
 {
+
+struct DeviceScoreBatchView
+{
+  const float * data{nullptr};
+  uint32_t count{0};
+};
+
+struct RosMessageStamp
+{
+  std::string frame_id;
+  int32_t sec{0};
+  uint32_t nanosec{0};
+};
 
 struct DecodeResult
 {
@@ -60,21 +74,16 @@ public:
 
   // Decode with scoring (detection mode): argmax over scores, pick best pose.
   DecodeResult decode(
-    const float * poses_device,      // [N, 4, 4] all refined poses
-    uint32_t num_poses,
-    const float * scores_device,     // [1, N] scores from score network
+    DevicePoseBatchView poses,
+    DeviceScoreBatchView scores,
     std::shared_ptr<const MeshData> mesh_data,
-    const std::string & frame_id,
-    uint32_t timestamp_sec,
-    uint32_t timestamp_nsec);
+    const RosMessageStamp & stamp);
 
   // Decode without scoring (tracking mode): single pose, no argmax.
   DecodeResult decodeTracking(
-    const float * poses_device,      // [1, 4, 4]
+    DevicePoseBatchView poses,
     std::shared_ptr<const MeshData> mesh_data,
-    const std::string & frame_id,
-    uint32_t timestamp_sec,
-    uint32_t timestamp_nsec);
+    const RosMessageStamp & stamp);
 
 private:
   cudaStream_t stream_;

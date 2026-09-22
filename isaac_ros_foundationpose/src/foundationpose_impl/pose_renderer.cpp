@@ -203,18 +203,26 @@ void PoseRenderer::freeDeviceMemory()
 }
 
 void PoseRenderer::renderRefine(
-  const float * poses_device, uint32_t N,
-  const float * point_cloud_device, const uint8_t * rgb_device,
-  const Eigen::Matrix3f & K, uint32_t rgb_H, uint32_t rgb_W,
-  std::shared_ptr<const MeshData> md,
-  float * rendered_out_device,
-  float * observed_out_device)
+  DevicePoseBatchView poses_view,
+  const FrameObservationView & frame,
+  MeshGpuView md,
+  RefineRenderOutputView output)
 {
+  const float * poses_device = poses_view.data;
+  const uint32_t N = poses_view.count;
+  const Eigen::Matrix3f K = frame.intrinsics.matrix();
+  const uint32_t rgb_H = frame.rgb.size.height;
+  const uint32_t rgb_W = frame.rgb.size.width;
   uint32_t H = params_.resized_height;
   uint32_t W = params_.resized_width;
   uint32_t C = kNumChannels;
+  if (output.pose_count != N ||
+    output.render_size.height != H || output.render_size.width != W)
+  {
+    throw std::invalid_argument("PoseRenderer output shape does not match pose/render dimensions");
+  }
 
-  allocateDeviceMemory(N, H, W, C, md->num_vertices);
+  allocateDeviceMemory(N, H, W, C, md.num_vertices);
 
   // Copy poses to host
   std::vector<float> ph(N * 16);
@@ -228,14 +236,14 @@ void PoseRenderer::renderRefine(
   }
 
   Eigen::Vector2i out_size{static_cast<int>(H), static_cast<int>(W)};
-  auto tfs = computeCropWindowTF(poses, K, out_size, params_.crop_ratio, md->mesh_diameter);
+  auto tfs = computeCropWindowTF(poses, K, out_size, params_.crop_ratio, md.diameter);
 
   Eigen::MatrixXf bbox2d(tfs.size(), 4);
   constructBBox2D(bbox2d, tfs, H, W);
 
   // nvdiffrast render
-  nvidia::isaac_ros::transform_pts(stream_, pts_cam_device_, md->mesh_vertices_device,
-    const_cast<float *>(poses_device), md->num_vertices, kVertexPts, N, kPoseLen);
+  nvidia::isaac_ros::transform_pts(stream_, pts_cam_device_, const_cast<float *>(md.vertices),
+    const_cast<float *>(poses_device), md.num_vertices, kVertexPts, N, kPoseLen);
   CHECK_CUDA_ERROR(cudaGetLastError(), "transform_pts");
 
   Eigen::Matrix4f proj_mat;
@@ -251,38 +259,40 @@ void PoseRenderer::renderRefine(
     cudaMemcpyHostToDevice, stream_), "bbox2d H2D");
 
   nvidia::isaac_ros::generate_pose_clip(stream_, pose_clip_device_,
-    const_cast<float *>(poses_device), bbox2d_device_, md->mesh_vertices_device,
-    proj_mat, rgb_H, rgb_W, md->num_vertices, N);
+    const_cast<float *>(poses_device), bbox2d_device_, const_cast<float *>(md.vertices),
+    proj_mat, rgb_H, rgb_W, md.num_vertices, N);
   CHECK_CUDA_ERROR(cudaGetLastError(), "pose_clip");
 
-  nvidia::isaac_ros::rasterize(stream_, cr_, pose_clip_device_, md->mesh_faces_device,
-    rast_out_device_, md->num_vertices, md->num_faces, H, W, N);
+  nvidia::isaac_ros::rasterize(stream_, cr_, pose_clip_device_, const_cast<int32_t *>(md.faces),
+    rast_out_device_, md.num_vertices, md.num_faces, H, W, N);
   CHECK_CUDA_ERROR(cudaGetLastError(), "rasterize");
 
   nvidia::isaac_ros::interpolate(stream_, pts_cam_device_, rast_out_device_,
-    md->mesh_faces_device, xyz_map_device_, md->num_vertices, md->num_faces, kVertexPts, H, W, N);
+    const_cast<int32_t *>(md.faces), xyz_map_device_, md.num_vertices, md.num_faces,
+    kVertexPts, H, W, N);
   CHECK_CUDA_ERROR(cudaGetLastError(), "interpolate xyz");
 
   nvidia::isaac_ros::compute_vertex_diffuse(
-    stream_, diffuse_vertex_device_, md->mesh_normals_device, const_cast<float *>(poses_device),
-    N, md->num_vertices);
+    stream_, diffuse_vertex_device_, const_cast<float *>(md.normals),
+    const_cast<float *>(poses_device), N, md.num_vertices);
   CHECK_CUDA_ERROR(cudaGetLastError(), "compute diffuse");
   nvidia::isaac_ros::interpolate(stream_, diffuse_vertex_device_, rast_out_device_,
-    md->mesh_faces_device, diffuse_map_device_, md->num_vertices, md->num_faces, 1, H, W, N);
+    const_cast<int32_t *>(md.faces), diffuse_map_device_, md.num_vertices, md.num_faces,
+    1, H, W, N);
   CHECK_CUDA_ERROR(cudaGetLastError(), "interpolate diffuse");
 
   // Texture - normalize texture map (cached when mesh unchanged)
-  if (norm_tex_num_verts_ != md->num_vertices || !norm_tex_device_) {
-    size_t tex_bytes = static_cast<size_t>(md->texture_map_height) *
-      md->texture_map_width * md->texture_map_channels * sizeof(float);
+  if (norm_tex_num_verts_ != md.num_vertices || !norm_tex_device_) {
+    size_t tex_bytes = static_cast<size_t>(md.texture_height) *
+      md.texture_width * md.texture_channels * sizeof(float);
     if (norm_tex_device_) {cudaFree(norm_tex_device_);}
     CHECK_CUDA_ERROR(cudaMalloc(&norm_tex_device_, tex_bytes), "norm_tex");
 
     nvcv::Tensor u8_tex;
-    wrapU8Tensor(md->texture_map_device, u8_tex, 1,
-      md->texture_map_height, md->texture_map_width, md->texture_map_channels);
-    nvcv::TensorShape::ShapeType sh{1, md->texture_map_height, md->texture_map_width,
-      md->texture_map_channels};
+    wrapU8Tensor(const_cast<uint8_t *>(md.texture), u8_tex, 1,
+      md.texture_height, md.texture_width, md.texture_channels);
+    nvcv::TensorShape::ShapeType sh{
+      1, md.texture_height, md.texture_width, md.texture_channels};
     nvcv::Tensor float_tex(nvcv::TensorShape{sh, "NHWC"}, nvcv::TYPE_F32);
     cvcuda::ConvertTo cvt;
     cvt(stream_, u8_tex, float_tex, 1.0f / 255.0f, 0.0f);
@@ -290,23 +300,24 @@ void PoseRenderer::renderRefine(
     auto ftd = float_tex.exportData<nvcv::TensorDataStridedCuda>();
     CHECK_CUDA_ERROR(cudaMemcpyAsync(norm_tex_device_, ftd->basePtr(), tex_bytes,
       cudaMemcpyDeviceToDevice, stream_), "cache norm_tex");
-    norm_tex_num_verts_ = md->num_vertices;
+    norm_tex_num_verts_ = md.num_vertices;
   }
 
-  if (md->has_tex) {
-    nvidia::isaac_ros::interpolate(stream_, md->texcoords_device, rast_out_device_,
-      md->mesh_faces_device, texcoords_out_device_, md->num_vertices, md->num_faces,
+  if (md.has_texture) {
+    nvidia::isaac_ros::interpolate(
+      stream_, const_cast<float *>(md.texcoords), rast_out_device_,
+      const_cast<int32_t *>(md.faces), texcoords_out_device_, md.num_vertices, md.num_faces,
       kTexcoordDim, H, W, N);
     CHECK_CUDA_ERROR(cudaGetLastError(), "interpolate tex");
 
     nvidia::isaac_ros::texture(stream_, norm_tex_device_,
       texcoords_out_device_, color_device_,
-      md->texture_map_height, md->texture_map_width, md->texture_map_channels, 1, H, W, N);
+      md.texture_height, md.texture_width, md.texture_channels, 1, H, W, N);
     CHECK_CUDA_ERROR(cudaGetLastError(), "texture");
   } else {
     nvidia::isaac_ros::interpolate(stream_, norm_tex_device_,
-      rast_out_device_, md->mesh_faces_device, color_device_,
-      md->num_vertices, md->num_faces, kVertexPts, H, W, N, 1);
+      rast_out_device_, const_cast<int32_t *>(md.faces), color_device_,
+      md.num_vertices, md.num_faces, kVertexPts, H, W, N, 1);
     CHECK_CUDA_ERROR(cudaGetLastError(), "interpolate color");
   }
 
@@ -340,18 +351,15 @@ void PoseRenderer::renderRefine(
   CHECK_CUDA_ERROR(cudaMemcpyAsync(trans_matrix_device_, tm_flat.data(),
     tm_flat.size() * sizeof(float), cudaMemcpyHostToDevice, stream_), "trans_mat H2D");
 
-  nvcv::Tensor rgb_src_t;
-  wrapU8Tensor(const_cast<uint8_t *>(rgb_device), rgb_src_t, 1, rgb_H, rgb_W, C);
-
   {
     std::vector<nvcv::Image> src_imgs;
     nvcv::ImageDataStridedCuda::Buffer buf_src;
     buf_src.numPlanes = 1;
     buf_src.planes[0].width = rgb_W;
     buf_src.planes[0].height = rgb_H;
-    buf_src.planes[0].rowStride = rgb_W * 3;
+    buf_src.planes[0].rowStride = frame.rgb.row_stride_bytes;
     buf_src.planes[0].basePtr = reinterpret_cast<NVCVByte *>(
-      rgb_src_t.exportData<nvcv::TensorDataStridedCuda>()->basePtr());
+      const_cast<uint8_t *>(frame.rgb.data));
     auto img = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{nvcv::FMT_RGB8, buf_src});
     for (uint32_t i = 0; i < N; i++) {
       src_imgs.push_back(img);
@@ -389,17 +397,13 @@ void PoseRenderer::renderRefine(
 
   // Warp observed XYZ
   {
-    nvcv::Tensor xyz_src_t;
-    wrapFloatTensor(const_cast<float *>(point_cloud_device), xyz_src_t, 1, rgb_H, rgb_W, C);
-
     std::vector<nvcv::Image> src_imgs;
     nvcv::ImageDataStridedCuda::Buffer buf_src;
     buf_src.numPlanes = 1;
     buf_src.planes[0].width = rgb_W;
     buf_src.planes[0].height = rgb_H;
-    buf_src.planes[0].rowStride = rgb_W * 3 * sizeof(float);
-    buf_src.planes[0].basePtr = reinterpret_cast<NVCVByte *>(
-      xyz_src_t.exportData<nvcv::TensorDataStridedCuda>()->basePtr());
+    buf_src.planes[0].rowStride = frame.point_cloud.row_stride_bytes;
+    buf_src.planes[0].basePtr = reinterpret_cast<NVCVByte *>(frame.point_cloud.data);
     auto img = nvcv::ImageWrapData(nvcv::ImageDataStridedCuda{nvcv::FMT_RGBf32, buf_src});
     for (uint32_t i = 0; i < N; i++) {
       src_imgs.push_back(img);
@@ -446,26 +450,26 @@ void PoseRenderer::renderRefine(
   // Threshold and downscale point clouds
   nvidia::isaac_ros::threshold_and_downscale_pointcloud(
     stream_, transformed_xyz_map_device_, const_cast<float *>(poses_device),
-    N, W * H, md->mesh_diameter / 2.0f, params_.min_depth, params_.max_depth);
+    N, W * H, md.diameter / 2.0f, params_.min_depth, params_.max_depth);
 
   auto rcd = flip_color.exportData<nvcv::TensorDataStridedCuda>();
   auto rxd = flip_xyz.exportData<nvcv::TensorDataStridedCuda>();
   nvidia::isaac_ros::threshold_and_downscale_pointcloud(
     stream_, reinterpret_cast<float *>(rxd->basePtr()), const_cast<float *>(poses_device),
-    N, W * H, md->mesh_diameter / 2.0f, params_.min_depth, params_.max_depth);
+    N, W * H, md.diameter / 2.0f, params_.min_depth, params_.max_depth);
 
   // Concat color (RGB) and xyz_map (XYZ) into the caller-provided rendered
   // output buffer, and warped RGB + transformed XYZ into the observed buffer.
   nvidia::isaac_ros::concat(stream_,
     reinterpret_cast<float *>(rcd->basePtr()),
     reinterpret_cast<float *>(rxd->basePtr()),
-    rendered_out_device, N, H, W, C, C);
+    output.rendered, N, H, W, C, C);
 
   nvidia::isaac_ros::concat(stream_,
     transformed_rgb_device_, transformed_xyz_map_device_,
-    observed_out_device, N, H, W, C, C);
+    output.observed, N, H, W, C, C);
 
-  // No cudaStreamSynchronize here: the caller's NitrosTensor WriteHandle dtor
+  // No cudaStreamSynchronize here: the caller's tensor buffer WriteHandle dtor
   // records the completion event on stream_ AFTER our queued kernels.
 }
 

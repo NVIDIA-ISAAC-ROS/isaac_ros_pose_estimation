@@ -31,18 +31,17 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
+#include "sensor_msgs/msg/image.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_ros/transform_broadcaster.h"
-#include "isaac_ros_nitros_image_type/nitros_image.hpp"
-#include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
-#include "isaac_ros_tensor_list_interfaces/msg/tensor_list.hpp"
+#include "isaac_ros_tensor_msgs/tensor_list_msg.hpp"
+#include "tensorrt_conversions/tensorrt_conversions.hpp"
 #include "vision_msgs/msg/detection3_d_array.hpp"
-#include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
 #include "isaac_ros_foundationpose/srv/switch_mesh.hpp"
 
-#include "message_filters/subscriber.h"
-#include "message_filters/synchronizer.h"
-#include "message_filters/sync_policies/exact_time.h"
+#include "message_filters/subscriber.hpp"
+#include "message_filters/synchronizer.hpp"
+#include "message_filters/sync_policies/exact_time.hpp"
 
 #include "isaac_ros_foundationpose/foundationpose_impl/mesh_loader.hpp"
 #include "isaac_ros_foundationpose/foundationpose_impl/pose_renderer.hpp"
@@ -58,6 +57,9 @@ namespace isaac_ros
 namespace foundationpose
 {
 
+namespace TensorMsg = nvidia::isaac_ros::isaac_ros_tensor_msgs;
+namespace TrtConv = nvidia::isaac_ros::tensorrt_conversions;
+
 class FoundationPoseTrackingNode : public rclcpp::Node
 {
 public:
@@ -66,57 +68,53 @@ public:
 
 private:
   void syncCallback(
-    const nitros::NitrosImage::ConstSharedPtr & rgb,
-    const nitros::NitrosImage::ConstSharedPtr & depth,
+    const sensor_msgs::msg::Image::ConstSharedPtr & rgb,
+    const sensor_msgs::msg::Image::ConstSharedPtr & depth,
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & cam_info);
 
   void processFrame(
-    nitros::NitrosImage::ConstSharedPtr rgb,
-    nitros::NitrosImage::ConstSharedPtr depth,
+    sensor_msgs::msg::Image::ConstSharedPtr rgb,
+    sensor_msgs::msg::Image::ConstSharedPtr depth,
     sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info,
-    isaac_ros_tensor_list_interfaces::msg::TensorList::ConstSharedPtr pose_input);
+    TensorMsg::TensorListMsg::ConstSharedPtr pose_input);
 
   void initializePipeline();
 
-  nitros::NitrosTensorList callRefineTRT(nitros::NitrosTensorList input);
-  void onRefineResult(const nitros::NitrosTensorList::ConstSharedPtr & result);
+  TensorMsg::TensorListMsg callRefineTRT(TensorMsg::TensorListMsg input);
+  void onRefineResult(const TensorMsg::TensorListMsg::ConstSharedPtr & result);
   bool switchMesh(
     const std::string & mesh_file_path, bool request_selector_reset,
     std::string & message);
 
   using SyncPolicy = message_filters::sync_policies::ExactTime<
-    nitros::NitrosImage, nitros::NitrosImage,
+    sensor_msgs::msg::Image, sensor_msgs::msg::Image,
     sensor_msgs::msg::CameraInfo>;
 
-  std::shared_ptr<message_filters::Subscriber<nitros::NitrosImage>> rgb_sub_;
-  std::shared_ptr<message_filters::Subscriber<nitros::NitrosImage>> depth_sub_;
+  std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> rgb_sub_;
+  std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> depth_sub_;
   std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::CameraInfo>> cam_info_sub_;
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
 
   // Pose input is state, not a synced data stream.
-  rclcpp::Subscription<isaac_ros_tensor_list_interfaces::msg::TensorList>::SharedPtr
-    pose_state_sub_;
+  rclcpp::Subscription<TensorMsg::TensorListMsg>::SharedPtr pose_state_sub_;
   std::mutex pose_state_mutex_;
-  isaac_ros_tensor_list_interfaces::msg::TensorList::ConstSharedPtr latest_pose_input_;
+  TensorMsg::TensorListMsg::ConstSharedPtr latest_pose_input_;
 
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr detection_pub_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_client_;
   rclcpp::Service<isaac_ros_foundationpose::srv::SwitchMesh>::SharedPtr switch_mesh_srv_;
-  // Plain rclcpp publisher of NitrosTensorList. The type adapter still gives
-  // GPU zero-copy to NITROS subscribers (e.g. NitrosPlaybackNode) and
-  // automatic conversion to plain ROS TensorList for non-NITROS subscribers.
-  rclcpp::Publisher<nitros::NitrosTensorList>::SharedPtr pose_matrix_pub_;
+  rclcpp::Publisher<TensorMsg::TensorListMsg>::SharedPtr pose_matrix_pub_;
 
   // TRT topic pub/sub (blocking pattern)
-  rclcpp::Publisher<nitros::NitrosTensorList>::SharedPtr refine_pub_;
-  rclcpp::Subscription<nitros::NitrosTensorList>::SharedPtr refine_sub_;
+  rclcpp::Publisher<TensorMsg::TensorListMsg>::SharedPtr refine_pub_;
+  rclcpp::Subscription<TensorMsg::TensorListMsg>::SharedPtr refine_sub_;
   rclcpp::CallbackGroup::SharedPtr trt_callback_group_;
 
   // Blocking sync state for refine TRT
   std::mutex refine_mutex_;
   std::condition_variable refine_cv_;
   bool refine_result_ready_{false};
-  nitros::NitrosTensorList refine_result_;
+  TensorMsg::TensorListMsg refine_result_;
 
   // Persistent worker thread
   void workerLoop();
@@ -133,10 +131,8 @@ private:
   // Pre-allocated GPU buffers (no cudaMalloc/cudaFree in callbacks)
   float * pose_input_gpu_{nullptr};        // [1,4,4] input pose from detection
   float * pc_gpu_{nullptr};                // [rgb_h * rgb_w * 3] lazy-alloc on first frame
+  ImageDim pc_size_;
 
-  // CUDA memory pools backing published NitrosTensors. See foundationpose_node.hpp.
-  nitros::CUDAMemoryPool refine_pool_;       // block = H * W * 6 * 4B
-  nitros::CUDAMemoryPool pose_matrix_pool_;  // block = 16 * 4B
   int * support_count_device_{nullptr};    // single int on GPU for support-count kernel output
 
   // Pipeline components

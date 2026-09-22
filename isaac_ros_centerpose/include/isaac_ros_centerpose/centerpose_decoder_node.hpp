@@ -22,14 +22,15 @@
 #include <vector>
 
 #include "Eigen/Dense"
+#include "isaac_ros_common/cuda_stream.hpp"
 #include "isaac_ros_centerpose/centerpose_detection.hpp"
-#include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
-#include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
-#include "message_filters/subscriber.h"
-#include "message_filters/synchronizer.h"
-#include "message_filters/sync_policies/exact_time.h"
+#include "isaac_ros_tensor_msgs/msg/tensor_list.hpp"
+#include "message_filters/subscriber.hpp"
+#include "message_filters/synchronizer.hpp"
+#include "message_filters/sync_policies/exact_time.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
+#include "tensor_msgs/msg/experimental_tensor.hpp"
 #include "vision_msgs/msg/detection3_d_array.hpp"
 
 namespace nvidia
@@ -38,6 +39,9 @@ namespace isaac_ros
 {
 namespace centerpose
 {
+
+using Tensor = tensor_msgs::msg::ExperimentalTensor;
+using TensorList = isaac_ros_tensor_msgs::msg::TensorList;
 
 /**
  * @class CenterPoseDecoderNode
@@ -52,7 +56,7 @@ public:
 
 private:
   void InputCallback(
-    const nvidia::isaac_ros::nitros::NitrosTensorList::ConstSharedPtr & nitros_tensor_list,
+    const TensorList::ConstSharedPtr & tensor_list,
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info
   );
   bool initialize();
@@ -71,26 +75,18 @@ private:
   // Score threshold
   double score_threshold_;
 
-  // Storage type (reserved for future tensor layout / memory-type handling)
-  int32_t storage_type_;
-
   // Object / instance name that is detected
   std::string object_name_;
 
-  // Tensor name
-  std::string tensor_name_;
-
-  int64_t memory_pool_block_size_;
-  int64_t memory_pool_num_blocks_;
   int16_t input_queue_size_;
   int16_t output_queue_size_;
 
   // Subscriptions and publishers
-  message_filters::Subscriber<nvidia::isaac_ros::nitros::NitrosTensorList> tensor_list_sub_;
+  message_filters::Subscriber<TensorList> tensor_list_sub_;
   message_filters::Subscriber<sensor_msgs::msg::CameraInfo> camera_info_sub_;
 
   using ExactPolicy = message_filters::sync_policies::ExactTime<
-    nvidia::isaac_ros::nitros::NitrosTensorList,
+    TensorList,
     sensor_msgs::msg::CameraInfo
   >;
   message_filters::Synchronizer<ExactPolicy> camera_image_sync_;
@@ -98,7 +94,6 @@ private:
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr detection3darray_pub_;
 
   // CUDA resources
-  nvidia::isaac_ros::nitros::CUDAMemoryPool pool_;
   ::nvidia::isaac_ros::common::CudaStreamPtr cuda_stream_;
 
   Eigen::Matrix3f camera_matrix_;

@@ -60,10 +60,8 @@ def generate_test_description():
             'engine_file_path': MODEL_PATH,
             'input_tensor_names': ['input_tensor'],
             'input_binding_names': ['input'],
-            'input_tensor_formats': ['nitros_tensor_list_nchw_rgb_f32'],
             'output_tensor_names': ['output'],
             'output_binding_names': ['output'],
-            'output_tensor_formats': ['nitros_tensor_list_nchw_rgb_f32'],
             'verbose': False,
             'force_engine_update': False,
         }])
@@ -97,7 +95,7 @@ def generate_test_description():
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     dope_encoder_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder_nodes.launch.py')]
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
         ),
         launch_arguments={
             'input_image_width': '852',

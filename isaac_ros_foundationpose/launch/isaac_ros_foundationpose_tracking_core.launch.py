@@ -375,10 +375,14 @@ def generate_launch_description():
         namespace='',
         executable='component_container_mt',
         composable_node_descriptions=IsaacROSFoundationPoseTrackingLaunchFragment
-        .get_composable_nodes().values(),
+        .get_composable_nodes({
+            'camera_resolution': {'width': 1920, 'height': 1200}
+        }).values(),
         output='screen'
     )
 
     return launch.LaunchDescription(
         [foundationpose_tracking_container] +
-        IsaacROSFoundationPoseTrackingLaunchFragment.get_launch_actions().values())
+        list(IsaacROSFoundationPoseTrackingLaunchFragment.get_launch_actions({
+            'camera_resolution': {'width': 1920, 'height': 1200}
+        }).values()))

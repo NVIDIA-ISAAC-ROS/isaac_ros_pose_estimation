@@ -18,12 +18,14 @@
 #include "isaac_ros_centerpose/centerpose_decoder_node.hpp"
 
 #include <array>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 
+#include "cuda_buffer/cuda_buffer_api.hpp"
 #include "isaac_ros_common/qos.hpp"
-#include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
 #include "isaac_ros_centerpose/soft_nms_nvidia.hpp"
 #include "isaac_ros_centerpose/cuboid_pnp_solver.hpp"
 #include "isaac_ros_centerpose/cuboid3d.hpp"
@@ -209,8 +211,8 @@ bool CenterPoseDecoderNode::UpdateCameraProperties(
 
   const Eigen::Vector2f center = original_image_size_.cast<float>() / 2.0f;
   const float scale = std::max(
-      static_cast<float>(camera_info->width),
-      static_cast<float>(camera_info->height));
+    static_cast<float>(camera_info->width),
+    static_cast<float>(camera_info->height));
 
   constexpr float rotation_deg{0.0f};
   constexpr bool inverse{true};
@@ -229,12 +231,7 @@ CenterPoseDecoderNode::CenterPoseDecoderNode(const rclcpp::NodeOptions & options
       std::vector<int64_t>({}))},
   cuboid_scaling_factor_{declare_parameter<double>("cuboid_scaling_factor", 0.0)},
   score_threshold_{declare_parameter<double>("score_threshold", 1.0)},
-  storage_type_{declare_parameter<int32_t>("storage_type", int32_t{0})},
   object_name_{declare_parameter<std::string>("object_name", "")},
-  tensor_name_{declare_parameter<std::string>("tensor_name", "input_tensor")},
-  memory_pool_block_size_(declare_parameter<int64_t>("memory_pool_block_size",
-    3 * 1024 * 1024 * 4)),
-  memory_pool_num_blocks_(declare_parameter<int64_t>("memory_pool_num_blocks", 40)),
   input_queue_size_(declare_parameter<int16_t>("input_queue_size", 10)),
   output_queue_size_(declare_parameter<int16_t>("output_queue_size", 10)),
   tensor_list_sub_{},
@@ -263,22 +260,17 @@ CenterPoseDecoderNode::CenterPoseDecoderNode(const rclcpp::NodeOptions & options
 
   // Create CUDA resources
   cuda_stream_ = ::nvidia::isaac_ros::common::createCudaStream("CenterPoseDecoderNode");
-  CHECK_CUDA_ERROR(pool_.create(
-    static_cast<size_t>(memory_pool_block_size_),
-    static_cast<size_t>(memory_pool_num_blocks_),
-    nvidia::isaac_ros::nitros::CUDAMemoryPool::MemoryType::Device),
-    "Failed to create CUDA memory pool");
 
-  // This function sets the QoS parameter for publishers and subscribers setup by this NITROS node
+  // Set the QoS parameter for the publishers and subscribers.
   const rclcpp::QoS input_qos = ::isaac_ros::common::AddQosParameter(
     *this, "DEFAULT", "input_qos").keep_last(input_queue_size_);
   const rclcpp::QoS output_qos = ::isaac_ros::common::AddQosParameter(
     *this, "DEFAULT", "output_qos").keep_last(output_queue_size_);
-  const rmw_qos_profile_t rmw_qos_profile = input_qos.get_rmw_qos_profile();
 
   // Create subscribers and publishers
-  rclcpp::SubscriptionOptions sub_options;
-  sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  rclcpp::SubscriptionOptions tensor_sub_options;
+  tensor_sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  tensor_sub_options.acceptable_buffer_backends = "any";
   rclcpp::PublisherOptions pub_options;
   pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
 
@@ -287,8 +279,8 @@ CenterPoseDecoderNode::CenterPoseDecoderNode(const rclcpp::NodeOptions & options
       &CenterPoseDecoderNode::InputCallback, this,
       std::placeholders::_1, std::placeholders::_2));
 
-  tensor_list_sub_.subscribe(this, INPUT_TOPIC_NAME, rmw_qos_profile, sub_options);
-  camera_info_sub_.subscribe(this, CAMERA_INFO_INPUT_TOPIC_NAME, rmw_qos_profile, sub_options);
+  tensor_list_sub_.subscribe(this, INPUT_TOPIC_NAME, input_qos, tensor_sub_options);
+  camera_info_sub_.subscribe(this, CAMERA_INFO_INPUT_TOPIC_NAME, input_qos);
 
   detection3darray_pub_ = create_publisher<vision_msgs::msg::Detection3DArray>(
     OUTPUT_TOPIC_NAME, output_qos, pub_options);
@@ -324,12 +316,12 @@ CenterPoseDetectionList CenterPoseDecoderNode::ProcessTensor(
     constexpr int32_t kps_heatmap_size_flattened{16};
     constexpr int32_t obj_scale_size_flattened{3};
     detection.keypoints2d = Calculate2DKeypoints(
-        tensors[kTensorStrToIdx.at("kps_displacement_mean")].block<1, keypoints_size_flattened>(
-            i, 0),
-        affine_transform_);
+      tensors[kTensorStrToIdx.at("kps_displacement_mean")].block<1, keypoints_size_flattened>(
+        i, 0),
+      affine_transform_);
     detection.bbox = CalculateBBoxPoints(
-        tensors[kTensorStrToIdx.at("bboxes")].block<1, bbox_size_flattened>(i, 0),
-        affine_transform_);
+      tensors[kTensorStrToIdx.at("bboxes")].block<1, bbox_size_flattened>(i, 0),
+      affine_transform_);
     detection.kps_heatmap_mean =
       tensors[kTensorStrToIdx.at("kps_heatmap_mean")].block<1, kps_heatmap_size_flattened>(i, 0);
     detection.bbox_size =
@@ -377,71 +369,142 @@ CenterPoseDetectionList CenterPoseDecoderNode::ProcessTensor(
 }
 
 void CenterPoseDecoderNode::InputCallback(
-  const nvidia::isaac_ros::nitros::NitrosTensorList::ConstSharedPtr & nitros_tensor_list,
+  const TensorList::ConstSharedPtr & tensor_list,
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info)
 {
   RCLCPP_DEBUG(get_logger(), "CenterPoseDecoderNode input callback called");
 
-  UpdateCameraProperties(camera_info);
+  if (!UpdateCameraProperties(camera_info)) {
+    return;
+  }
 
-  // Staging buffers on host for postprocessing (device -> host via NitrosTensor read handles)
   CenterPoseDetectionList detections;
   const cudaStream_t stream = *cuda_stream_;
-  if (nitros_tensor_list->num_tensors() == 0) {
+  if (tensor_list->tensors.empty()) {
     RCLCPP_WARN(get_logger(), "Received empty tensor list");
     return;
   }
-
-  const nvidia::isaac_ros::nitros::NitrosTensor & tensor0 = nitros_tensor_list->get_tensor(0);
-  const std::vector<int32_t> tensor0_dims = tensor0.shape().dims();
-  if (tensor0_dims.empty()) {
-    RCLCPP_WARN(get_logger(), "Tensor list entry 0 has empty shape");
+  if (tensor_list->names.size() != tensor_list->tensors.size()) {
+    RCLCPP_ERROR(get_logger(), "Tensor names and tensors must have the same size");
     return;
   }
-  const size_t batch_size = static_cast<size_t>(tensor0_dims[0]);
+
+  std::array<const Tensor *, kTensorIdxToStr.size()> ordered_tensors{};
+  for (size_t i = 0; i < kTensorIdxToStr.size(); ++i) {
+    for (size_t j = 0; j < tensor_list->names.size(); ++j) {
+      if (tensor_list->names[j] == kTensorIdxToStr[i]) {
+        ordered_tensors[i] = &tensor_list->tensors[j];
+        break;
+      }
+    }
+    if (ordered_tensors[i] == nullptr) {
+      RCLCPP_WARN(
+        get_logger(), "Required tensor '%s' is missing from tensor list", kTensorIdxToStr[i]);
+      return;
+    }
+  }
+
+  const Tensor & tensor0 = *ordered_tensors[0];
+  if (tensor0.shape.empty() || tensor0.shape[0] <= 0) {
+    RCLCPP_WARN(get_logger(), "Tensor '%s' has empty shape", kTensorIdxToStr[0]);
+    return;
+  }
+  const size_t batch_size = static_cast<size_t>(tensor0.shape[0]);
 
   for (size_t batch_i = 0; batch_i < batch_size; ++batch_i) {
     std::vector<Eigen::MatrixXfRM> batch_tensors;
-    batch_tensors.reserve(nitros_tensor_list->num_tensors());
+    batch_tensors.reserve(ordered_tensors.size());
 
-    for (size_t j = 0; j < nitros_tensor_list->num_tensors(); ++j) {
-      const nvidia::isaac_ros::nitros::NitrosTensor & src_tensor =
-        nitros_tensor_list->get_tensor(j);
-      const std::vector<int32_t> dims = src_tensor.shape().dims();
-      if (dims.empty()) {
-        continue;
+    for (const Tensor * tensor : ordered_tensors) {
+      constexpr uint8_t kDLPackFloat = 2;
+      if (tensor->dtype_code != kDLPackFloat || tensor->dtype_bits != 32 ||
+        tensor->dtype_lanes != 1)
+      {
+        RCLCPP_ERROR(get_logger(), "CenterPose tensors must use float32 elements");
+        return;
       }
-      const int32_t batch_dim = dims[0];
-      if (batch_dim <= 0) {
-        continue;
+      if (tensor->shape.size() != 3 ||
+        tensor->shape[0] != static_cast<int64_t>(batch_size) ||
+        tensor->shape[1] <= 0 || tensor->shape[2] <= 0)
+      {
+        RCLCPP_ERROR(get_logger(), "CenterPose tensors must have shape [batch, rows, columns]");
+        return;
       }
 
-      const Eigen::Index mat_rows = static_cast<Eigen::Index>(dims.size() > 1 ? dims[1] : 1);
-      const Eigen::Index mat_cols = static_cast<Eigen::Index>(dims.size() > 2 ? dims[2] : 1);
+      const Eigen::Index mat_rows = static_cast<Eigen::Index>(tensor->shape[1]);
+      const Eigen::Index mat_cols = static_cast<Eigen::Index>(tensor->shape[2]);
       Eigen::MatrixXfRM mat(mat_rows, mat_cols);
 
-      const size_t bytes_per_batch = src_tensor.tensor_size() / static_cast<size_t>(batch_dim);
-      const size_t byte_offset = batch_i * bytes_per_batch;
+      const size_t rows = static_cast<size_t>(mat_rows);
+      const size_t columns = static_cast<size_t>(mat_cols);
+      if (rows > std::numeric_limits<size_t>::max() / columns) {
+        RCLCPP_ERROR(get_logger(), "CenterPose tensor size overflow");
+        return;
+      }
+      const size_t elements_per_batch = rows * columns;
+      if (elements_per_batch > std::numeric_limits<size_t>::max() / sizeof(float)) {
+        RCLCPP_ERROR(get_logger(), "CenterPose tensor byte size overflow");
+        return;
+      }
+      const size_t bytes_per_batch = elements_per_batch * sizeof(float);
+      const size_t batch_stride = tensor->strides.empty() ?
+        elements_per_batch : static_cast<size_t>(tensor->strides[0]);
+      const bool invalid_inner_strides = !tensor->strides.empty() &&
+        (tensor->strides.size() != tensor->shape.size() ||
+        tensor->strides[0] < 0 || tensor->strides[1] != tensor->shape[2] ||
+        tensor->strides[2] != 1);
+      bool invalid_batch_stride = false;
+      if (batch_stride < elements_per_batch) {
+        invalid_batch_stride = true;
+      }
+      if (batch_stride > std::numeric_limits<size_t>::max() / sizeof(float)) {
+        invalid_batch_stride = true;
+      }
+      if (invalid_inner_strides || invalid_batch_stride ||
+        tensor->byte_offset > std::numeric_limits<size_t>::max())
+      {
+        RCLCPP_ERROR(get_logger(), "CenterPose tensors must have a contiguous inner layout");
+        return;
+      }
+      const size_t batch_stride_bytes = batch_stride * sizeof(float);
+      const size_t base_offset = static_cast<size_t>(tensor->byte_offset);
+      if (batch_i > (std::numeric_limits<size_t>::max() - base_offset) / batch_stride_bytes) {
+        RCLCPP_ERROR(get_logger(), "CenterPose tensor byte offset overflow");
+        return;
+      }
+      const size_t byte_offset = base_offset + batch_i * batch_stride_bytes;
+      if (byte_offset > tensor->data.size() ||
+        bytes_per_batch > tensor->data.size() - byte_offset)
+      {
+        RCLCPP_ERROR(get_logger(), "CenterPose tensor data buffer is too small");
+        return;
+      }
 
-      auto read_handle = src_tensor.get_read_handle(stream);
-      const uint8_t * const buffer_ptr = read_handle.get_ptr();
+      auto read_handle = cuda_buffer_backend::from_input_buffer(tensor->data, stream);
       cudaError_t cuda_result = cudaMemcpyAsync(
-        mat.data(), buffer_ptr + byte_offset, bytes_per_batch, cudaMemcpyDeviceToHost, stream);
-      CHECK_CUDA_ERROR(cuda_result, "Failed to copy tensor data from device buffer");
+        mat.data(), read_handle.get_ptr() + byte_offset, bytes_per_batch,
+        cudaMemcpyDefault, stream);
+      if (cuda_result != cudaSuccess) {
+        RCLCPP_ERROR(
+          get_logger(), "Failed to copy tensor data: %s", cudaGetErrorString(cuda_result));
+        return;
+      }
 
       cuda_result = cudaStreamSynchronize(stream);
-      CHECK_CUDA_ERROR(cuda_result, "Failed to synchronize CUDA stream");
+      if (cuda_result != cudaSuccess) {
+        RCLCPP_ERROR(
+          get_logger(), "Failed to synchronize CUDA stream: %s",
+          cudaGetErrorString(cuda_result));
+        return;
+      }
       batch_tensors.push_back(std::move(mat));
     }
 
-    if (batch_tensors.size() == nitros_tensor_list->num_tensors()) {
-      CenterPoseDetectionList batch_detections = ProcessTensor(batch_tensors);
-      detections.insert(
-        detections.end(), batch_detections.begin(), batch_detections.end());
-    }
+    CenterPoseDetectionList batch_detections = ProcessTensor(batch_tensors);
+    detections.insert(
+      detections.end(), batch_detections.begin(), batch_detections.end());
   }
 
-  // convert from NitrosTensorList to Detection3DArray message
   vision_msgs::msg::Detection3DArray detection3darray_message;
   detection3darray_message.header.stamp = camera_info->header.stamp;
   detection3darray_message.header.frame_id = camera_info->header.frame_id;
@@ -449,16 +512,10 @@ void CenterPoseDecoderNode::InputCallback(
 
   for (size_t i = 0; i < detections.size(); ++i) {
     vision_msgs::msg::Detection3D detection3d_message;
-    detection3d_message.header.stamp.sec =
-      static_cast<int32_t>(nitros_tensor_list->get_timestamp_sec());
-    detection3d_message.header.stamp.nanosec =
-      static_cast<uint32_t>(nitros_tensor_list->get_timestamp_nsec());
-    {
-      std::string frame_id = nitros_tensor_list->get_frame_id();
-      if (frame_id.empty()) {
-        frame_id = camera_info->header.frame_id;
-      }
-      detection3d_message.header.frame_id = frame_id;
+    detection3d_message.header.stamp = tensor_list->header.stamp;
+    detection3d_message.header.frame_id = tensor_list->header.frame_id;
+    if (detection3d_message.header.frame_id.empty()) {
+      detection3d_message.header.frame_id = camera_info->header.frame_id;
     }
     detection3d_message.bbox.size.x = detections[i].bbox_size(0);
     detection3d_message.bbox.size.y = detections[i].bbox_size(1);

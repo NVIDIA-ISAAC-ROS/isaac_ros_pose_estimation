@@ -24,15 +24,15 @@
 #include <vector>
 
 #include "geometry_msgs/msg/pose_array.hpp"
-#include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
-#include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
-#include "isaac_ros_tensor_list_interfaces/msg/tensor_list.hpp"
-#include "message_filters/subscriber.h"
-#include "message_filters/sync_policies/exact_time.h"
-#include "message_filters/synchronizer.h"
+#include "isaac_ros_common/cuda_stream.hpp"
+#include "isaac_ros_tensor_msgs/msg/tensor_list.hpp"
+#include "message_filters/subscriber.hpp"
+#include "message_filters/synchronizer.hpp"
+#include "message_filters/sync_policies/exact_time.hpp"
 #include "opencv2/core.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
+#include "tensor_msgs/msg/experimental_tensor.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "vision_msgs/msg/detection3_d_array.hpp"
 
@@ -42,6 +42,9 @@ namespace isaac_ros
 {
 namespace dope
 {
+
+using Tensor = tensor_msgs::msg::ExperimentalTensor;
+using TensorList = isaac_ros_tensor_msgs::msg::TensorList;
 
 /**
  * @class DopeDecoderNode
@@ -58,7 +61,7 @@ public:
 
 private:
   void DopeDecoderDetectionCallback(
-    const nvidia::isaac_ros::nitros::NitrosTensorList::ConstSharedPtr & tensor_list,
+    const TensorList::ConstSharedPtr & tensor_list,
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info);
   bool UpdateCameraProperties(
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info);
@@ -106,13 +109,13 @@ private:
   // CUDA resources
   ::nvidia::isaac_ros::common::CudaStreamPtr cuda_stream_;
 
-  // NITROS-aware synchronization of belief-map and adjusted CameraInfo inputs
-  ::message_filters::Subscriber<nvidia::isaac_ros::nitros::NitrosTensorList> tensor_sub_;
-  ::message_filters::Subscriber<sensor_msgs::msg::CameraInfo> camera_info_sub_;
-  using ExactPolicy = ::message_filters::sync_policies::ExactTime<
-    nvidia::isaac_ros::nitros::NitrosTensorList,
+  message_filters::Subscriber<TensorList> tensor_sub_;
+  message_filters::Subscriber<sensor_msgs::msg::CameraInfo> camera_info_sub_;
+
+  using ExactPolicy = message_filters::sync_policies::ExactTime<
+    TensorList,
     sensor_msgs::msg::CameraInfo>;
-  ::message_filters::Synchronizer<ExactPolicy> exact_sync_;
+  message_filters::Synchronizer<ExactPolicy> exact_sync_;
 
   // Publisher for output Detection3DArray messages
   rclcpp::Publisher<vision_msgs::msg::Detection3DArray>::SharedPtr detections_pub_;

@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_dope</name>
-  <version>4.6.0</version>
+  <version>5.0.0</version>
   <description>Deep learning based pose estimation</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -37,21 +37,22 @@
 
   <build_depend>eigen</build_depend>
 
+  <depend>ament_index_cpp</depend>
   <depend>cv_bridge</depend>
 
-  <depend>isaac_ros_common</depend>
+  <depend>cuda_buffer</depend>
   <depend>isaac_ros_dnn_image_encoder</depend>
-  <depend>isaac_ros_nitros</depend>
-  <depend>isaac_ros_nitros_tensor_list_type</depend>
-  <depend>isaac_ros_tensor_list_interfaces</depend>
+  <depend>isaac_ros_tensor_msgs</depend>
   <depend>isaac_ros_tensor_rt</depend>
   <depend>python3-torch-pip-shim</depend>
+  <depend>python3-torchvision-pip-shim</depend>
   <depend>python3-onnx-pip-shim</depend>
   <depend>python3-onnxscript-pip-shim</depend>
 
   <depend>rclcpp</depend>
   <depend>message_filters</depend>
   <depend>sensor_msgs</depend>
+  <depend>tensor_msgs</depend>
   <depend>vision_msgs</depend>
   <depend>tf2_eigen</depend>
   <depend>libopencv-dev</depend>

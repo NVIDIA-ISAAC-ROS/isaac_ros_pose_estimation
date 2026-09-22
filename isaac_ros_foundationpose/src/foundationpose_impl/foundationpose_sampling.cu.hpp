@@ -23,6 +23,7 @@
 
 #include "cuda.h"
 #include "cuda_runtime.h"
+#include "isaac_ros_foundationpose/foundationpose_impl/pose_sampler.hpp"
 
 namespace nvidia
 {
@@ -30,29 +31,31 @@ namespace isaac_ros
 {
 
 void erode_depth(
-  cudaStream_t stream, float * depth, float * out, int H, int W, int radius = 2,
+  cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+  float * out, int radius = 2,
   float depth_diff_thres = 0.001,
   float ratio_thres = 0.8, float zfar = 100);
 void bilateral_filter_depth(
-  cudaStream_t stream, float * depth, float * out, int H, int W, float zfar = 100, int radius = 2,
+  cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+  float * out, float zfar = 100, int radius = 2,
   float sigmaD = 2,
   float sigmaR = 100000);
 
 // Generate an interleaved (H, W, 3) xyz map on GPU directly from a depth image (H, W) and
 // camera intrinsics K (row-major 3x3). Pixels with depth <= 0 produce (0, 0, 0).
 void depth_to_xyz_map(
-  cudaStream_t stream, const float * depth, float * xyz_map,
-  int H, int W,
-  float fx, float fy, float cx, float cy);
+  cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+  foundationpose::DeviceImageView<float> xyz_map,
+  foundationpose::CameraIntrinsics intrinsics);
 
 // GPU implementation of guessTranslation. Inputs: depth (H, W) and mask (H, W, uint8).
 // Outputs 4 floats into center_and_flag_device: [cx, cy, cz, flag] where flag > 0 means valid.
 // depth_scratch must hold at least H*W floats (used to stage masked depths for median via
 // partial reduction).
 void guess_translation_gpu(
-  cudaStream_t stream, const float * depth, const uint8_t * mask, int H, int W,
-  float fx_inv_m00, float fx_inv_m02,
-  float fy_inv_m11, float fy_inv_m12,
+  cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+  foundationpose::DeviceImageView<const uint8_t> mask,
+  foundationpose::CameraIntrinsics intrinsics,
   float min_depth,
   float * depth_scratch,
   float * center_and_flag_device);

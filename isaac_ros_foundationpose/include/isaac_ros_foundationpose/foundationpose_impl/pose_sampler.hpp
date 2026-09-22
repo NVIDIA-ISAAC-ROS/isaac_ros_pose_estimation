@@ -20,6 +20,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -35,6 +36,60 @@ namespace isaac_ros
 {
 namespace foundationpose
 {
+
+struct ImageDim
+{
+  uint32_t height{0};
+  uint32_t width{0};
+
+  size_t numPixels() const
+  {
+    return static_cast<size_t>(height) * width;
+  }
+
+  bool operator==(const ImageDim & other) const
+  {
+    return height == other.height && width == other.width;
+  }
+};
+
+template<typename T>
+struct DeviceImageView
+{
+  T * data{nullptr};
+  ImageDim size;
+  size_t row_stride_bytes{0};
+  uint32_t channels{1};
+
+  size_t minimumRowBytes() const
+  {
+    return static_cast<size_t>(size.width) * channels * sizeof(T);
+  }
+};
+
+struct CameraIntrinsics
+{
+  float fx{0.0f};
+  float fy{0.0f};
+  float cx{0.0f};
+  float cy{0.0f};
+
+  Eigen::Matrix3f matrix() const
+  {
+    Eigen::Matrix3f result;
+    result << fx, 0.0f, cx, 0.0f, fy, cy, 0.0f, 0.0f, 1.0f;
+    return result;
+  }
+};
+
+struct FrameObservationView
+{
+  DeviceImageView<const uint8_t> rgb;
+  DeviceImageView<const float> depth;
+  DeviceImageView<const uint8_t> mask;
+  DeviceImageView<float> point_cloud;
+  CameraIntrinsics intrinsics;
+};
 
 struct PoseSamplerParams
 {
@@ -68,10 +123,7 @@ public:
   // Generate pose hypotheses from depth + mask + point cloud + intrinsics.
   // Returns flattened 4x4 pose matrices and batch metadata.
   SamplingResult sample(
-    const float * depth_device,
-    const uint8_t * mask_device,
-    uint32_t height, uint32_t width,
-    const Eigen::Matrix3f & K,
+    const FrameObservationView & frame,
     std::shared_ptr<const MeshData> mesh_data);
 
   void updateParams(const PoseSamplerParams & params) {params_ = params;}
@@ -85,6 +137,7 @@ private:
   float * center_flag_device_{nullptr};      // [cx, cy, cz, flag] on GPU
   float * center_flag_host_pinned_{nullptr};  // pinned mirror for single 16B D2H
   bool device_mem_cached_{false};
+  ImageDim cached_size_;
 
   static constexpr int kNumBatches = 6;
 };

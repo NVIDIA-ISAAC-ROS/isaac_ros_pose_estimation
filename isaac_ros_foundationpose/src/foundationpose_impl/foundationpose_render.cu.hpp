@@ -24,6 +24,7 @@
 #include "cuda.h"
 #include "cuda_runtime.h"
 #include "Eigen/Dense"
+#include "isaac_ros_foundationpose/foundationpose_impl/pose_sampler.hpp"
 #include "isaac_ros_common/cuda_stream.hpp"
 
 #include "nvdiffrast/common/common.h"
@@ -50,8 +51,8 @@ void apply_diffuse_lighting(
 // Count how many points in pc_device (n_points * 3 floats, XYZ) lie within radius r of (cx, cy, cz).
 // Result is written to count_device (int on GPU). Caller must zero count_device before calling if reusing.
 void count_points_within_radius(
-  cudaStream_t stream, const float * pc_device, int n_points,
-  float cx, float cy, float cz, float radius_sq, int * count_device);
+  cudaStream_t stream, foundationpose::DeviceImageView<float> point_cloud,
+  const Eigen::Vector3f & center, float radius_sq, int * count_device);
 void transform_pts(
   cudaStream_t stream, float * output, const float * pts, const float * tfs, int pts_num,
   int pts_channel, int tfs_num, int tfs_dim);

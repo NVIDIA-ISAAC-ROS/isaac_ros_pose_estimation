@@ -26,6 +26,8 @@
 #include "Eigen/Dense"
 
 #include "isaac_ros_foundationpose/foundationpose_impl/mesh_loader.hpp"
+#include "isaac_ros_foundationpose/foundationpose_impl/pose_sampler.hpp"
+#include "isaac_ros_foundationpose/foundationpose_impl/pose_transformer.hpp"
 
 // Forward declare CudaRaster from nvdiffrast
 namespace CR {class CudaRaster;}
@@ -46,6 +48,14 @@ struct PoseRendererParams
   uint32_t resized_width{160};
 };
 
+struct RefineRenderOutputView
+{
+  float * rendered{nullptr};
+  float * observed{nullptr};
+  uint32_t pose_count{0};
+  ImageDim render_size;
+};
+
 // Renders synthetic mesh views and crops observed images for DNN comparison.
 // Extracted from FoundationposeRender GXF codelet.
 class PoseRenderer
@@ -63,18 +73,13 @@ public:
   // 6 channels = rendered RGB(3) + rendered XYZ(3) for `rendered_out`;
   //              observed RGB(3) + observed XYZ(3) for `observed_out`.
   // All GPU writes are queued on the renderer's stream; caller is expected to
-  // hold the corresponding NitrosTensor WriteHandles open across this call so
+  // hold the corresponding tensor buffer WriteHandles open across this call so
   // their dtor records a completion event AFTER the renderer's queued kernels.
   void renderRefine(
-    const float * poses_device,        // [N, 4, 4]
-    uint32_t num_poses,
-    const float * point_cloud_device,  // [H, W, 3]
-    const uint8_t * rgb_device,        // [H, W, 3] uint8
-    const Eigen::Matrix3f & K,
-    uint32_t rgb_height, uint32_t rgb_width,
-    std::shared_ptr<const MeshData> mesh_data,
-    float * rendered_out_device,       // [N, H, W, 6]
-    float * observed_out_device);      // [N, H, W, 6]
+    DevicePoseBatchView poses,
+    const FrameObservationView & frame,
+    MeshGpuView mesh,
+    RefineRenderOutputView output);
 
   // Number of float elements per pose in each output tensor (= H * W * 6).
   size_t floatsPerPose() const

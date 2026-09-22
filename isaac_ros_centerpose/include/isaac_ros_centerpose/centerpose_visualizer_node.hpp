@@ -25,16 +25,16 @@
 #include "Eigen/Dense"
 
 #include "isaac_ros_centerpose/centerpose_types.hpp"
-#include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
-#include "isaac_ros_nitros_image_type/nitros_image.hpp"
+#include "isaac_ros_common/cuda_stream.hpp"
 #include "vision_msgs/msg/detection3_d_array.hpp"
 #include "vision_msgs/msg/detection3_d.hpp"
 #include "vision_msgs/msg/object_hypothesis_with_pose.hpp"
 #include "vision_msgs/msg/bounding_box3_d.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
-#include "message_filters/subscriber.h"
-#include "message_filters/synchronizer.h"
-#include "message_filters/sync_policies/exact_time.h"
+#include "sensor_msgs/msg/image.hpp"
+#include "message_filters/subscriber.hpp"
+#include "message_filters/synchronizer.hpp"
+#include "message_filters/sync_policies/exact_time.hpp"
 
 namespace nvidia
 {
@@ -51,35 +51,31 @@ public:
 
 private:
   void InputCallback(
-    const nvidia::isaac_ros::nitros::NitrosImage::ConstSharedPtr & nitros_image,
+    const sensor_msgs::msg::Image::ConstSharedPtr & image,
     const vision_msgs::msg::Detection3DArray::ConstSharedPtr & detection3darray,
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info
   );
   // Input Parameters
   bool show_axes_;
   int32_t bounding_box_color_;
-  int64_t memory_pool_block_size_;
-  int64_t memory_pool_num_blocks_;
   int16_t input_queue_size_;
   int16_t output_queue_size_;
 
   // Subscriptions and publishers
-  message_filters::Subscriber<nvidia::isaac_ros::nitros::NitrosImage> image_sub_;
+  message_filters::Subscriber<sensor_msgs::msg::Image> image_sub_;
   message_filters::Subscriber<vision_msgs::msg::Detection3DArray> detection3darray_sub_;
   message_filters::Subscriber<sensor_msgs::msg::CameraInfo> camera_info_sub_;
 
   using ExactPolicy = message_filters::sync_policies::ExactTime<
-    nvidia::isaac_ros::nitros::NitrosImage,
+    sensor_msgs::msg::Image,
     vision_msgs::msg::Detection3DArray,
     sensor_msgs::msg::CameraInfo
   >;
   message_filters::Synchronizer<ExactPolicy> image_camera_info_sync_;
 
-  rclcpp::Publisher<nvidia::isaac_ros::nitros::NitrosImage>::SharedPtr
-    image_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
 
   // CUDA resources
-  nvidia::isaac_ros::nitros::CUDAMemoryPool pool_;
   ::nvidia::isaac_ros::common::CudaStreamPtr cuda_stream_;
 };
 

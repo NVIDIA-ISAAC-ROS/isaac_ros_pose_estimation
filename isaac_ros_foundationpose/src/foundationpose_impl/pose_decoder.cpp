@@ -52,8 +52,7 @@ int findMaxScoreIndex(cudaStream_t stream, const float * scores_device, int N)
 DecodeResult buildResult(
   const Eigen::Matrix4f & pose_matrix,
   std::shared_ptr<const MeshData> mesh_data,
-  const std::string & frame_id,
-  uint32_t ts_sec, uint32_t ts_nsec)
+  const RosMessageStamp & stamp)
 {
   Eigen::Matrix4f tf_to_center = Eigen::Matrix4f::Identity();
   tf_to_center.block<3, 1>(0, 3) = -mesh_data->mesh_model_center;
@@ -68,9 +67,9 @@ DecodeResult buildResult(
   float bbox_z = std::abs(mesh_data->max_vertex[2] - mesh_data->min_vertex[2]);
 
   vision_msgs::msg::Detection3D det;
-  det.header.stamp.sec = ts_sec;
-  det.header.stamp.nanosec = ts_nsec;
-  det.header.frame_id = frame_id;
+  det.header.stamp.sec = stamp.sec;
+  det.header.stamp.nanosec = stamp.nanosec;
+  det.header.frame_id = stamp.frame_id;
   det.bbox.center.position.x = translation[0];
   det.bbox.center.position.y = translation[1];
   det.bbox.center.position.z = translation[2];
@@ -87,9 +86,9 @@ DecodeResult buildResult(
   det.results.push_back(hyp);
 
   DecodeResult result;
-  result.detection3d_array.header.stamp.sec = ts_sec;
-  result.detection3d_array.header.stamp.nanosec = ts_nsec;
-  result.detection3d_array.header.frame_id = frame_id;
+  result.detection3d_array.header.stamp.sec = stamp.sec;
+  result.detection3d_array.header.stamp.nanosec = stamp.nanosec;
+  result.detection3d_array.header.frame_id = stamp.frame_id;
   result.detection3d_array.detections.push_back(det);
   result.pose_matrix = pose_matrix;
   return result;
@@ -102,47 +101,47 @@ PoseDecoder::PoseDecoder(cudaStream_t stream)
 }
 
 DecodeResult PoseDecoder::decode(
-  const float * poses_device,
-  uint32_t num_poses,
-  const float * scores_device,
+  DevicePoseBatchView poses,
+  DeviceScoreBatchView scores,
   std::shared_ptr<const MeshData> mesh_data,
-  const std::string & frame_id,
-  uint32_t ts_sec, uint32_t ts_nsec)
+  const RosMessageStamp & stamp)
 {
-  if (num_poses == 0) {
+  if (poses.count == 0 || scores.count != poses.count) {
     throw std::runtime_error("[PoseDecoder] decode called with 0 poses");
   }
 
-  int best_idx = findMaxScoreIndex(stream_, scores_device, num_poses);
+  int best_idx = findMaxScoreIndex(stream_, scores.data, scores.count);
 
   Eigen::Matrix4f pose_matrix;
   const size_t mat_bytes = kMatSize * kMatSize * sizeof(float);
   CHECK_CUDA_ERROR(
     cudaMemcpyAsync(
       pose_matrix.data(),
-      reinterpret_cast<const char *>(poses_device) + best_idx * mat_bytes,
+      reinterpret_cast<const char *>(poses.data) + best_idx * mat_bytes,
       mat_bytes, cudaMemcpyDeviceToHost, stream_),
     "memcpy best pose");
   CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_), "sync best pose");
 
-  return buildResult(pose_matrix, mesh_data, frame_id, ts_sec, ts_nsec);
+  return buildResult(pose_matrix, mesh_data, stamp);
 }
 
 DecodeResult PoseDecoder::decodeTracking(
-  const float * poses_device,
+  DevicePoseBatchView poses,
   std::shared_ptr<const MeshData> mesh_data,
-  const std::string & frame_id,
-  uint32_t ts_sec, uint32_t ts_nsec)
+  const RosMessageStamp & stamp)
 {
+  if (poses.count != 1) {
+    throw std::runtime_error("[PoseDecoder] tracking requires exactly one pose");
+  }
   Eigen::Matrix4f pose_matrix;
   CHECK_CUDA_ERROR(
     cudaMemcpyAsync(
-      pose_matrix.data(), poses_device,
+      pose_matrix.data(), poses.data,
       kMatSize * kMatSize * sizeof(float), cudaMemcpyDeviceToHost, stream_),
     "memcpy tracking pose");
   CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_), "sync tracking pose");
 
-  return buildResult(pose_matrix, mesh_data, frame_id, ts_sec, ts_nsec);
+  return buildResult(pose_matrix, mesh_data, stamp);
 }
 
 }  // namespace foundationpose

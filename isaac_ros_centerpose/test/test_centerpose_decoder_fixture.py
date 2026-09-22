@@ -17,13 +17,12 @@
 
 """Fixture-backed launch test for the Isaac ROS CenterPose decoder."""
 
-import array
 import json
 import os
 import pathlib
 import time
 
-from isaac_ros_tensor_list_interfaces.msg import Tensor, TensorList, TensorShape
+from isaac_ros_tensor_msgs.msg import TensorList
 from isaac_ros_test import IsaacROSBaseTest, JSONConversion
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
@@ -31,6 +30,7 @@ import numpy as np
 import pytest
 import rclpy
 from sensor_msgs.msg import CameraInfo
+from tensor_msgs.msg import ExperimentalTensor
 from vision_msgs.msg import Detection3DArray
 
 
@@ -43,7 +43,7 @@ TENSOR_NAMES = [
     'kps_displacement_mean',
     'kps_heatmap_mean',
 ]
-FLOAT32_DATA_TYPE = 9
+FLOAT_DTYPE_CODE = 2
 TIMEOUT_SEC = 10
 POSITION_TOL = 1e-4
 SIZE_TOL = 1e-5
@@ -93,14 +93,15 @@ class IsaacROSCenterPoseDecoderFixtureTest(IsaacROSBaseTest):
         for tensor_name in TENSOR_NAMES:
             tensor_data = np.asarray(tensor_json[tensor_name], dtype=np.float32)
 
-            tensor = Tensor()
-            tensor.name = tensor_name
-            tensor.shape = TensorShape()
-            tensor.shape.rank = tensor_data.ndim
-            tensor.shape.dims = list(tensor_data.shape)
-            tensor.data_type = FLOAT32_DATA_TYPE
+            tensor = ExperimentalTensor()
+            tensor.dtype_code = FLOAT_DTYPE_CODE
+            tensor.dtype_bits = 32
+            tensor.dtype_lanes = 1
+            tensor.shape = list(tensor_data.shape)
             tensor.strides = []
-            tensor.data = array.array('B', tensor_data.tobytes())
+            tensor.byte_offset = 0
+            tensor.data = tensor_data.tobytes()
+            tensor_list.names.append(tensor_name)
             tensor_list.tensors.append(tensor)
 
         return tensor_list
