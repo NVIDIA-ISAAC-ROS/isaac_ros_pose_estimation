@@ -343,24 +343,34 @@ void apply_diffuse_lighting(
 }
 
 __global__ void count_points_within_radius_kernel(
-    const float* pc, int n_points, float cx, float cy, float cz, float r2, int* count) {
+    const float* pc, int height, int width, int row_stride,
+    float cx, float cy, float cz, float r2, int* count) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const int n_points = height * width;
   if (idx >= n_points) return;
-  float dx = pc[idx * 3 + 0] - cx;
-  float dy = pc[idx * 3 + 1] - cy;
-  float dz = pc[idx * 3 + 2] - cz;
+  const int row = idx / width;
+  const int col = idx % width;
+  const int offset = row * row_stride + col * 3;
+  float dx = pc[offset + 0] - cx;
+  float dy = pc[offset + 1] - cy;
+  float dz = pc[offset + 2] - cz;
   if (dx * dx + dy * dy + dz * dz < r2) {
     atomicAdd(count, 1);
   }
 }
 
 void count_points_within_radius(
-    cudaStream_t stream, const float* pc_device, int n_points,
-    float cx, float cy, float cz, float radius_sq, int* count_device) {
+    cudaStream_t stream, foundationpose::DeviceImageView<float> point_cloud,
+    const Eigen::Vector3f& center, float radius_sq, int* count_device) {
+  const int height = static_cast<int>(point_cloud.size.height);
+  const int width = static_cast<int>(point_cloud.size.width);
+  const int row_stride = static_cast<int>(point_cloud.row_stride_bytes / sizeof(float));
+  const int n_points = height * width;
   int block_size = 256;
   int grid_size = (n_points + block_size - 1) / block_size;
   count_points_within_radius_kernel<<<grid_size, block_size, 0, stream>>>(
-      pc_device, n_points, cx, cy, cz, radius_sq, count_device);
+      point_cloud.data, height, width, row_stride,
+      center.x(), center.y(), center.z(), radius_sq, count_device);
 }
 
 void transform_pts(

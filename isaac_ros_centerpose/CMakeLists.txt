@@ -36,7 +36,8 @@ ament_auto_add_library(centerpose_decoder_node SHARED
   src/cuboid3d.cpp
 )
 target_include_directories(centerpose_decoder_node PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(centerpose_decoder_node ${OpenCV_LIBS})
+target_link_libraries(centerpose_decoder_node
+  ${OpenCV_LIBS})
 rclcpp_components_register_nodes(centerpose_decoder_node "nvidia::isaac_ros::centerpose::CenterPoseDecoderNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::centerpose::CenterPoseDecoderNode;$<TARGET_FILE:centerpose_decoder_node>\n")
 set_target_properties(centerpose_decoder_node PROPERTIES
@@ -80,9 +81,9 @@ if(BUILD_TESTING)
   ament_add_gtest(centerpose_decoder_node_test test/centerpose_decoder_node_test.cpp)
   target_link_libraries(centerpose_decoder_node_test
     centerpose_decoder_node
-    CUDA::cudart)
+    CUDA::cudart
+    ${rclcpp_TARGETS})
   target_include_directories(centerpose_decoder_node_test PUBLIC include/isaac_ros_centerpose/)
-  ament_target_dependencies(centerpose_decoder_node_test rclcpp isaac_ros_nitros)
   # The FindPythonInterp and FindPythonLibs modules are removed
   if(POLICY CMP0148)
     cmake_policy(SET CMP0148 OLD)

@@ -30,14 +30,20 @@ namespace fs = std::filesystem;
 
 #include <algorithm>
 #include <array>
-#include <cmath>
+#include <cinttypes>
+#include <cstdint>
+#include <cstring>
 #include <functional>
+#include <limits>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
-#include "isaac_ros_common/qos.hpp"
+#include "cuda_buffer/cuda_buffer_api.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
-#include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
+#include "isaac_ros_common/qos.hpp"
+#include "isaac_ros_tensor_msgs/tensor_utils.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "vision_msgs/msg/detection3_d_array.hpp"
@@ -126,6 +132,73 @@ public:
 
 constexpr char INPUT_TOPIC_NAME[] = "belief_map_array";
 constexpr char OUTPUT_TOPIC_NAME[] = "dope/detections";
+
+size_t ElementCount(const Tensor & tensor)
+{
+  size_t count = 1;
+  for (const int64_t dimension : tensor.shape) {
+    if (dimension <= 0) {
+      throw std::invalid_argument("[DopeDecoderNode] Tensor dimensions must be positive");
+    }
+    const size_t extent = static_cast<size_t>(dimension);
+    if (count > std::numeric_limits<size_t>::max() / extent) {
+      throw std::overflow_error("[DopeDecoderNode] Tensor element count overflow");
+    }
+    count *= extent;
+  }
+  return count;
+}
+
+std::vector<float> CopyTensorToHost(
+  const Tensor & tensor, cudaStream_t stream)
+{
+  constexpr uint8_t kDLPackFloat = 2;
+  if (tensor.dtype_code != kDLPackFloat || tensor.dtype_bits != 32 ||
+    tensor.dtype_lanes != 1)
+  {
+    throw std::invalid_argument("[DopeDecoderNode] Belief maps tensor must be float32");
+  }
+
+  const size_t element_count = ElementCount(tensor);
+  const size_t storage_count = isaac_ros_tensor_msgs::RequiredStorageElements(tensor);
+  if (storage_count > std::numeric_limits<size_t>::max() / sizeof(float)) {
+    throw std::overflow_error("[DopeDecoderNode] Tensor byte size overflow");
+  }
+  const size_t byte_count = storage_count * sizeof(float);
+  if (tensor.byte_offset > tensor.data.size() ||
+    byte_count > tensor.data.size() - static_cast<size_t>(tensor.byte_offset))
+  {
+    throw std::invalid_argument("[DopeDecoderNode] Belief maps tensor buffer is too small");
+  }
+
+  std::vector<float> storage(storage_count);
+  auto input_handle = cuda_buffer_backend::from_input_buffer(tensor.data, stream);
+
+  const cudaError_t copy_result = cudaMemcpyAsync(
+    storage.data(), input_handle.get_ptr() + tensor.byte_offset, byte_count,
+    cudaMemcpyDeviceToHost, stream);
+  CHECK_CUDA_ERROR(copy_result, "[DopeDecoderNode] Device-to-host copy failed");
+  const cudaError_t sync_result = cudaStreamSynchronize(stream);
+  CHECK_CUDA_ERROR(sync_result, "[DopeDecoderNode] CUDA stream synchronization failed");
+
+  if (tensor.strides.empty()) {
+    return storage;
+  }
+
+  std::vector<float> dense(element_count);
+  for (size_t linear_index = 0; linear_index < element_count; ++linear_index) {
+    size_t remainder = linear_index;
+    size_t storage_index = 0;
+    for (size_t dimension = tensor.shape.size(); dimension-- > 0; ) {
+      const size_t extent = static_cast<size_t>(tensor.shape[dimension]);
+      storage_index +=
+        (remainder % extent) * isaac_ros_tensor_msgs::StrideInElements(tensor, dimension);
+      remainder /= extent;
+    }
+    dense[linear_index] = storage[storage_index];
+  }
+  return dense;
+}
 
 // Returns pixel mask for local maximums in single - channel image src
 void IsolateMaxima(const cv::Mat & src, cv::Mat & mask)
@@ -434,15 +507,15 @@ DopeDecoderNode::DopeDecoderNode(const rclcpp::NodeOptions & options)
 
   rclcpp::SubscriptionOptions sub_options;
   sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  sub_options.acceptable_buffer_backends = "any";
   rclcpp::PublisherOptions pub_options;
   pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
   exact_sync_.registerCallback(
     std::bind(
       &DopeDecoderNode::DopeDecoderDetectionCallback, this,
       std::placeholders::_1, std::placeholders::_2));
-  const auto input_qos_profile = input_qos_.get_rmw_qos_profile();
-  tensor_sub_.subscribe(this, INPUT_TOPIC_NAME, input_qos_profile, sub_options);
-  camera_info_sub_.subscribe(this, kCameraInfoTopicName, input_qos_profile, sub_options);
+  tensor_sub_.subscribe(this, INPUT_TOPIC_NAME, input_qos_, sub_options);
+  camera_info_sub_.subscribe(this, kCameraInfoTopicName, input_qos_);
 
   detections_pub_ = create_publisher<vision_msgs::msg::Detection3DArray>(
     OUTPUT_TOPIC_NAME, output_qos_, pub_options);
@@ -502,7 +575,7 @@ bool DopeDecoderNode::UpdateCameraProperties(
 // convert Detection3DArray to ROS message that will be published to the TF tree.
 
 void DopeDecoderNode::DopeDecoderDetectionCallback(
-  const nvidia::isaac_ros::nitros::NitrosTensorList::ConstSharedPtr & tensor_list,
+  const TensorList::ConstSharedPtr & tensor_list,
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info)
 {
   if (!UpdateCameraProperties(camera_info)) {
@@ -510,51 +583,60 @@ void DopeDecoderNode::DopeDecoderDetectionCallback(
     return;
   }
 
-  auto belief_maps = tensor_list->get_tensor(0);
-  if (belief_maps.data_type() != nvidia::isaac_ros::nitros::NitrosDataType::kFloat32) {
-    RCLCPP_ERROR(get_logger(), "Belief maps tensor has wrong type (expected float32)");
-    throw std::runtime_error("Invalid belief maps tensor type");
+  if (tensor_list->tensors.empty()) {
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 1000, "Belief maps tensor list is empty");
+    return;
   }
-
-  const nvidia::isaac_ros::nitros::ReadHandle handle = belief_maps.get_read_handle(*cuda_stream_);
+  const Tensor & belief_maps = tensor_list->tensors.front();
   // Ensure belief maps match expected shape in first two dimensions
-  const nvidia::isaac_ros::nitros::NitrosTensorShape belief_maps_shape = belief_maps.shape();
-  const auto & belief_maps_dims = belief_maps_shape.dims();
+  const auto & belief_maps_dims = belief_maps.shape;
   if (belief_maps_dims.size() < 4 ||
-    belief_maps_dims.at(0) != static_cast<int32_t>(kNumTensors) ||
-    belief_maps_dims.at(1) != static_cast<int32_t>(kInputMapsChannels))
+    belief_maps_dims.at(0) != static_cast<int64_t>(kNumTensors) ||
+    belief_maps_dims.at(1) != static_cast<int64_t>(kInputMapsChannels))
   {
-    RCLCPP_ERROR(
-      get_logger(), "Belief maps had unexpected shape in first two dimensions: {%d, %d, %d, %d}",
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Belief maps had unexpected shape: {%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64 "}",
       belief_maps_dims.size() > 0 ? belief_maps_dims.at(0) : -1,
       belief_maps_dims.size() > 1 ? belief_maps_dims.at(1) : -1,
       belief_maps_dims.size() > 2 ? belief_maps_dims.at(2) : -1,
       belief_maps_dims.size() > 3 ? belief_maps_dims.at(3) : -1);
-    throw std::runtime_error("Invalid belief maps shape");
+    return;
   }
+
+  std::vector<float> belief_maps_data;
+  try {
+    belief_maps_data = CopyTensorToHost(belief_maps, *cuda_stream_);
+  } catch (const std::exception & error) {
+    RCLCPP_ERROR(get_logger(), "%s", error.what());
+    return;
+  }
+
   // Copy tensor data over to a more portable form
   std::array<cv::Mat, kInputMapsChannels> maps;
-  const int input_map_row{belief_maps_dims.at(2)};
-  const int input_map_column{belief_maps_dims.at(3)};
+  const int input_map_row{static_cast<int>(belief_maps_dims.at(2))};
+  const int input_map_column{static_cast<int>(belief_maps_dims.at(3))};
+  const size_t channel_elements =
+    static_cast<size_t>(input_map_row) * static_cast<size_t>(input_map_column);
   for (size_t chan = 0; chan < kInputMapsChannels; ++chan) {
     maps[chan] = cv::Mat(input_map_row, input_map_column, CV_32F);
-    const size_t stride = input_map_row * input_map_column * sizeof(float);
-
-    const cudaError_t cuda_error =
-      cudaMemcpyAsync(maps[chan].data, handle.get_ptr() + chan * stride,
-                  stride, cudaMemcpyDeviceToHost, *cuda_stream_);
-    CHECK_CUDA_ERROR(cuda_error, "Failed to copy data to Matrix");
+    std::memcpy(
+      maps[chan].data, belief_maps_data.data() + chan * channel_elements,
+      channel_elements * sizeof(float));
   }
-  auto cuda_sync_error = cudaStreamSynchronize(*cuda_stream_);
-  CHECK_CUDA_ERROR(cuda_sync_error, "Failed to synchronize stream");
 
   // Analyze the belief map to find vertex locations in image space
   const std::vector<DopeObjectKeypoints> dope_objects =
     FindObjects(maps, map_peak_threshold_, affinity_map_angle_threshold_);
 
-  // convert from NitrosTensorList to Detection3DArray message
   vision_msgs::msg::Detection3DArray detection3darray_message;
-  detection3darray_message.header = camera_info->header;
+  // Prefer CameraInfo header when available; otherwise fall back to tensor_list metadata.
+  if (camera_info) {
+    detection3darray_message.header = camera_info->header;
+  } else {
+    detection3darray_message.header = tensor_list->header;
+  }
   if (dope_objects.empty()) {
     RCLCPP_DEBUG(get_logger(), "No objects detected.");
   }
@@ -593,7 +675,7 @@ void DopeDecoderNode::DopeDecoderDetectionCallback(
 
     if (enable_tf_publishing_) {
       transform_stamped.header.stamp = now();
-      transform_stamped.header.frame_id = tensor_list->get_frame_id();
+      transform_stamped.header.frame_id = tensor_list->header.frame_id;
       transform_stamped.child_frame_id = tf_frame_name_ + std::to_string(child_frame_id_num);
       // ExtractPose: translation (m) then quaternion xyzw.
       transform_stamped.transform.translation.x = pose[0];

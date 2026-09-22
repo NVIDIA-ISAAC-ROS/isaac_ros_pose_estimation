@@ -39,18 +39,17 @@ PoseTransformer::PoseTransformer(float rot_normalizer, cudaStream_t stream)
 }
 
 void PoseTransformer::applyDeltas(
-  float * poses_device,
-  uint32_t num_poses,
-  const void * trans_delta_device,
-  const void * rot_delta_device,
-  std::shared_ptr<const MeshData> mesh_data)
+  DevicePoseBatchView poses,
+  RefineDeltaBatchView deltas,
+  MeshGpuView mesh)
 {
+  if (poses.count != deltas.pose_count) {
+    throw std::invalid_argument("Pose and delta batch sizes do not match");
+  }
   nvidia::isaac_ros::apply_deltas_gpu(
-    stream_, poses_device,
-    reinterpret_cast<const float *>(trans_delta_device),
-    reinterpret_cast<const float *>(rot_delta_device),
-    static_cast<int>(num_poses),
-    mesh_data->mesh_diameter,
+    stream_, poses.data, deltas.translation, deltas.rotation,
+    static_cast<int>(poses.count),
+    mesh.diameter,
     rot_normalizer_);
   CHECK_CUDA_ERROR(cudaGetLastError(), "apply_deltas_gpu");
 }

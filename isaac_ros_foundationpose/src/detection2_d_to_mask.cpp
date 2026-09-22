@@ -15,9 +15,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#include <string>
+#include <cuda_runtime.h>
 
-#include <cv_bridge/cv_bridge.hpp>
 #include <opencv2/opencv.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
@@ -25,6 +24,8 @@
 #include <vision_msgs/msg/detection2_d.hpp>
 #include <vision_msgs/msg/detection2_d_array.hpp>
 
+#include "cuda_buffer/cuda_buffer_api.hpp"
+#include "isaac_ros_common/cuda_stream.hpp"
 #include "isaac_ros_common/qos.hpp"
 
 namespace nvidia
@@ -48,12 +49,23 @@ public:
     output_qos_{::isaac_ros::common::AddQosParameter(*this, "DEFAULT", "output_qos")},
     mask_width_(declare_parameter<int>("mask_width", 640)),
     mask_height_(declare_parameter<int>("mask_height", 480)),
-    image_pub_{create_publisher<sensor_msgs::msg::Image>("segmentation", output_qos_)},
     detection2_d_sub_{create_subscription<vision_msgs::msg::Detection2D>(
         "detection2_d", input_qos_,
         std::bind(&Detection2DToMask::boundingBoxCallback, this, std::placeholders::_1))}
   {
+    CHECK_CUDA_ERROR(
+      cudaStreamCreateWithFlags(&cuda_stream_, cudaStreamNonBlocking),
+      "Failed to create CUDA stream");
+    rclcpp::PublisherOptions pub_options;
+    pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+    image_pub_ = create_publisher<sensor_msgs::msg::Image>(
+      "segmentation", output_qos_, pub_options);
     RCLCPP_INFO(this->get_logger(), "Mask Height: %d, Mask Width: %d", mask_height_, mask_width_);
+  }
+
+  ~Detection2DToMask() override
+  {
+    cudaStreamDestroy(cuda_stream_);
   }
 
   void boundingBoxCallback(const vision_msgs::msg::Detection2D::SharedPtr msg)
@@ -71,11 +83,21 @@ public:
         msg->bbox.center.position.y + msg->bbox.size_y / 2),
       cv::Scalar(255), -1);
 
-    // Convert the OpenCV image to a ROS sensor_msgs::msg::Image and publish it
-    std_msgs::msg::Header header(msg->header);
-    cv_bridge::CvImage cv_image(header, "mono8", image);
     sensor_msgs::msg::Image image_msg;
-    cv_image.toImageMsg(image_msg);
+    image_msg.header = msg->header;
+    image_msg.height = mask_height_;
+    image_msg.width = mask_width_;
+    image_msg.encoding = "mono8";
+    image_msg.is_bigendian = false;
+    image_msg.step = mask_width_;
+    image_msg.data = cuda_buffer_backend::allocate_buffer(image.total());
+    {
+      auto output = cuda_buffer_backend::from_output_buffer(image_msg.data, cuda_stream_);
+      CHECK_CUDA_ERROR(
+        cudaMemcpyAsync(
+          output.get_ptr(), image.data, image.total(), cudaMemcpyHostToDevice, cuda_stream_),
+        "Failed to upload segmentation mask");
+    }
     image_pub_->publish(image_msg);
   }
 
@@ -86,6 +108,7 @@ private:
 
   int mask_width_;
   int mask_height_;
+  cudaStream_t cuda_stream_{nullptr};
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
   rclcpp::Subscription<vision_msgs::msg::Detection2D>::SharedPtr detection2_d_sub_;
 };

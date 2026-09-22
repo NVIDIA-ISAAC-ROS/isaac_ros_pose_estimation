@@ -37,10 +37,8 @@ class IsaacROSCenterPoseLaunchFragment(IsaacROSLaunchFragment):
         max_batch_size = LaunchConfiguration('max_batch_size')
         input_tensor_names = LaunchConfiguration('input_tensor_names')
         input_binding_names = LaunchConfiguration('input_binding_names')
-        input_tensor_formats = LaunchConfiguration('input_tensor_formats')
         output_tensor_names = LaunchConfiguration('output_tensor_names')
         output_binding_names = LaunchConfiguration('output_binding_names')
-        output_tensor_formats = LaunchConfiguration('output_tensor_formats')
 
         # Centerpose Decoder parameters
         output_field_size = LaunchConfiguration('output_field_size')
@@ -59,10 +57,8 @@ class IsaacROSCenterPoseLaunchFragment(IsaacROSLaunchFragment):
                     'max_batch_size': max_batch_size,
                     'input_tensor_names': input_tensor_names,
                     'input_binding_names': input_binding_names,
-                    'input_tensor_formats': input_tensor_formats,
                     'output_tensor_names': output_tensor_names,
                     'output_binding_names': output_binding_names,
-                    'output_tensor_formats': output_tensor_formats,
                 }]
             ),
             'centerpose_decoder_node': ComposableNode(
@@ -147,10 +143,6 @@ class IsaacROSCenterPoseLaunchFragment(IsaacROSLaunchFragment):
                 'input_binding_names',
                 default_value='["input"]',
                 description='A list of input tensor binding names (specified by model)'),
-            'input_tensor_formats': DeclareLaunchArgument(
-                'input_tensor_formats',
-                default_value='["nitros_tensor_list_nchw_rgb_f32"]',
-                description='The nitros format of the input tensors'),
             'output_tensor_names': DeclareLaunchArgument(
                 'output_tensor_names',
                 default_value=tensor_names_str,
@@ -160,10 +152,6 @@ class IsaacROSCenterPoseLaunchFragment(IsaacROSLaunchFragment):
                 'output_binding_names',
                 default_value=tensor_names_str,
                 description='A  list of output tensor binding names (specified by model)'),
-            'output_tensor_formats': DeclareLaunchArgument(
-                'output_tensor_formats',
-                default_value='["nitros_tensor_list_nhwc_rgb_f32"]',
-                description='The nitros format of the output tensors'),
             'output_field_size': DeclareLaunchArgument(
                 'output_field_size',
                 default_value='[128, 128]',

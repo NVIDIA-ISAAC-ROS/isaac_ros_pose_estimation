@@ -33,17 +33,16 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
+#include "sensor_msgs/msg/image.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_ros/transform_broadcaster.h"
-#include "isaac_ros_nitros_image_type/nitros_image.hpp"
-#include "isaac_ros_nitros_tensor_list_type/nitros_tensor_list.hpp"
-#include "isaac_ros_tensor_list_interfaces/msg/tensor_list.hpp"
+#include "isaac_ros_tensor_msgs/tensor_list_msg.hpp"
+#include "tensorrt_conversions/tensorrt_conversions.hpp"
 #include "vision_msgs/msg/detection3_d_array.hpp"
-#include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
 
-#include "message_filters/subscriber.h"
-#include "message_filters/synchronizer.h"
-#include "message_filters/sync_policies/approximate_time.h"
+#include "message_filters/subscriber.hpp"
+#include "message_filters/synchronizer.hpp"
+#include "message_filters/sync_policies/approximate_time.hpp"
 
 #include "isaac_ros_foundationpose/foundationpose_impl/mesh_loader.hpp"
 #include "isaac_ros_foundationpose/foundationpose_impl/pose_sampler.hpp"
@@ -61,6 +60,9 @@ namespace isaac_ros
 namespace foundationpose
 {
 
+namespace TensorMsg = nvidia::isaac_ros::isaac_ros_tensor_msgs;
+namespace TrtConv = nvidia::isaac_ros::tensorrt_conversions;
+
 class FoundationPoseNode : public rclcpp::Node
 {
 public:
@@ -69,35 +71,35 @@ public:
 
 private:
   void syncCallback(
-    const nitros::NitrosImage::ConstSharedPtr & rgb,
-    const nitros::NitrosImage::ConstSharedPtr & depth,
+    const sensor_msgs::msg::Image::ConstSharedPtr & rgb,
+    const sensor_msgs::msg::Image::ConstSharedPtr & depth,
     const sensor_msgs::msg::CameraInfo::ConstSharedPtr & cam_info,
-    const nitros::NitrosImage::ConstSharedPtr & mask);
+    const sensor_msgs::msg::Image::ConstSharedPtr & mask);
 
   void processFrame(
-    nitros::NitrosImage::ConstSharedPtr rgb,
-    nitros::NitrosImage::ConstSharedPtr depth,
+    sensor_msgs::msg::Image::ConstSharedPtr rgb,
+    sensor_msgs::msg::Image::ConstSharedPtr depth,
     sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info,
-    nitros::NitrosImage::ConstSharedPtr mask);
+    sensor_msgs::msg::Image::ConstSharedPtr mask);
 
   void initializePipeline();
 
   // Blocking TRT call helpers
-  nitros::NitrosTensorList callRefineTRT(nitros::NitrosTensorList input);
-  nitros::NitrosTensorList callScoreTRT(nitros::NitrosTensorList input);
+  TensorMsg::TensorListMsg callRefineTRT(TensorMsg::TensorListMsg input);
+  TensorMsg::TensorListMsg callScoreTRT(TensorMsg::TensorListMsg input);
 
-  void onRefineResult(const nitros::NitrosTensorList::ConstSharedPtr & result);
-  void onScoreResult(const nitros::NitrosTensorList::ConstSharedPtr & result);
+  void onRefineResult(const TensorMsg::TensorListMsg::ConstSharedPtr & result);
+  void onScoreResult(const TensorMsg::TensorListMsg::ConstSharedPtr & result);
 
   // Input sync
   using SyncPolicy = message_filters::sync_policies::ApproximateTime<
-    nitros::NitrosImage, nitros::NitrosImage,
-    sensor_msgs::msg::CameraInfo, nitros::NitrosImage>;
+    sensor_msgs::msg::Image, sensor_msgs::msg::Image,
+    sensor_msgs::msg::CameraInfo, sensor_msgs::msg::Image>;
 
-  std::shared_ptr<message_filters::Subscriber<nitros::NitrosImage>> rgb_sub_;
-  std::shared_ptr<message_filters::Subscriber<nitros::NitrosImage>> depth_sub_;
+  std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> rgb_sub_;
+  std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> depth_sub_;
   std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::CameraInfo>> cam_info_sub_;
-  std::shared_ptr<message_filters::Subscriber<nitros::NitrosImage>> mask_sub_;
+  std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>> mask_sub_;
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
 
   // Output publishers
@@ -105,30 +107,26 @@ private:
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_client_;
   rclcpp::Client<isaac_ros_foundationpose::srv::SwitchMesh>::SharedPtr
     tracking_switch_mesh_client_;
-  // Plain rclcpp publisher of NitrosTensorList. The type adapter still gives
-  // GPU zero-copy to NITROS subscribers (e.g. NitrosPlaybackNode) and
-  // automatic conversion to plain ROS TensorList for non-NITROS subscribers
-  // (e.g. the Selector).
-  rclcpp::Publisher<nitros::NitrosTensorList>::SharedPtr pose_matrix_pub_;
+  rclcpp::Publisher<TensorMsg::TensorListMsg>::SharedPtr pose_matrix_pub_;
 
   // TRT topic pub/sub (blocking pattern)
-  rclcpp::Publisher<nitros::NitrosTensorList>::SharedPtr refine_pub_;
-  rclcpp::Subscription<nitros::NitrosTensorList>::SharedPtr refine_sub_;
-  rclcpp::Publisher<nitros::NitrosTensorList>::SharedPtr score_pub_;
-  rclcpp::Subscription<nitros::NitrosTensorList>::SharedPtr score_sub_;
+  rclcpp::Publisher<TensorMsg::TensorListMsg>::SharedPtr refine_pub_;
+  rclcpp::Subscription<TensorMsg::TensorListMsg>::SharedPtr refine_sub_;
+  rclcpp::Publisher<TensorMsg::TensorListMsg>::SharedPtr score_pub_;
+  rclcpp::Subscription<TensorMsg::TensorListMsg>::SharedPtr score_sub_;
   rclcpp::CallbackGroup::SharedPtr trt_callback_group_;
 
   // Blocking sync state for refine TRT
   std::mutex refine_mutex_;
   std::condition_variable refine_cv_;
   bool refine_result_ready_{false};
-  nitros::NitrosTensorList refine_result_;
+  TensorMsg::TensorListMsg refine_result_;
 
   // Blocking sync state for score TRT
   std::mutex score_mutex_;
   std::condition_variable score_cv_;
   bool score_result_ready_{false};
-  nitros::NitrosTensorList score_result_;
+  TensorMsg::TensorListMsg score_result_;
 
   // Single-frame processing gate and watchdog
   std::atomic<bool> processing_{false};
@@ -142,14 +140,7 @@ private:
   // Pre-allocated GPU buffers (no cudaMalloc/cudaFree in callbacks)
   float * all_poses_gpu_{nullptr};         // [max_hypothesis, 4, 4] sampled/refined poses
   float * pc_gpu_{nullptr};                // [rgb_h * rgb_w * 3] lazy-alloc on first frame
-
-  // CUDA memory pools that back published NitrosTensors. Each block is sized
-  // for one tensor; tensors are acquired via NitrosTensor::from_pool, written
-  // by the renderer / our code, then handed off to the publisher. The pool's
-  // ref-counted deleter recycles the block when all consumers drop the ref.
-  nitros::CUDAMemoryPool refine_pool_;       // block = batch * H * W * 6 * 4B
-  nitros::CUDAMemoryPool score_pool_;        // block = total * H * W * 6 * 4B
-  nitros::CUDAMemoryPool pose_matrix_pool_;  // block = 16 * 4B
+  ImageDim pc_size_;
 
   // Pipeline components (no TensorRT -- that is in separate nodes)
   std::unique_ptr<MeshLoader> mesh_loader_;

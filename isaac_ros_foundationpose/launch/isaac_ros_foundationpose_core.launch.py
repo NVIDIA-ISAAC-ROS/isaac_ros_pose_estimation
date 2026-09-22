@@ -61,13 +61,12 @@ class IsaacROSFoundationPoseLaunchFragment(IsaacROSLaunchFragment):
             # Drops input_images_expect_freq out of input_images_drop_freq input messages
             'drop_node':  ComposableNode(
                 name='drop_node',
-                package='isaac_ros_nitros_topic_tools',
-                plugin='nvidia::isaac_ros::nitros::NitrosCameraDropNode',
+                package='isaac_ros_topic_tools',
+                plugin='nvidia::isaac_ros::topic_tools::CameraDropNode',
                 parameters=[{
                     'X': input_images_drop_freq,
                     'Y': input_images_expect_freq,
                     'mode': 'mono+depth',
-                    'depth_format_string': 'nitros_image_mono16'
                 }],
                 remappings=[
                     ('image_1', 'image_rect'),
@@ -371,10 +370,14 @@ def generate_launch_description():
         namespace='',
         executable='component_container_mt',
         composable_node_descriptions=IsaacROSFoundationPoseLaunchFragment
-        .get_composable_nodes().values(),
+        .get_composable_nodes({
+            'camera_resolution': {'width': 1920, 'height': 1200}
+        }).values(),
         output='screen'
     )
 
     return launch.LaunchDescription(
         [foundationpose_container] +
-        IsaacROSFoundationPoseLaunchFragment.get_launch_actions().values())
+        list(IsaacROSFoundationPoseLaunchFragment.get_launch_actions({
+            'camera_resolution': {'width': 1920, 'height': 1200}
+        }).values()))

@@ -97,6 +97,7 @@ def generate_test_description():
             'input_image_height': '800',
             'network_image_width': '512',
             'network_image_height': '512',
+            'input_encoding': 'bgr8',
             'image_mean': '[0.408, 0.447, 0.47]',
             'image_stddev': '[0.289, 0.274, 0.278]',
             'attach_to_shared_component_container': 'True',
@@ -117,14 +118,12 @@ def generate_test_description():
             'model_repository_paths': [_TMP_MODEL_DIR],
             'input_tensor_names': ['input_tensor'],
             'input_binding_names': ['input'],
-            'input_tensor_formats': ['nitros_tensor_list_nchw_rgb_f32'],
             'output_tensor_names': ['bboxes', 'scores', 'kps', 'clses',
                                     'obj_scale', 'kps_displacement_mean',
                                     'kps_heatmap_mean'],
             'output_binding_names': ['bboxes', 'scores', 'kps', 'clses',
                                      'obj_scale', 'kps_displacement_mean',
                                      'kps_heatmap_mean'],
-            'output_tensor_formats': ['nitros_tensor_list_nhwc_rgb_f32'],
             'log_level': 0
         }],
     )

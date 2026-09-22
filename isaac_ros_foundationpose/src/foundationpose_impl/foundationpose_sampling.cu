@@ -23,8 +23,8 @@ namespace nvidia {
 namespace isaac_ros {
 
 __global__ void erode_depth_kernel(
-    float* depth, float* out, int H, int W, int radius, float depth_diff_thres, float ratio_thres,
-    float zfar) {
+    const float* depth, float* out, int H, int W, int depth_stride, int radius,
+    float depth_diff_thres, float ratio_thres, float zfar) {
   int h = blockIdx.y * blockDim.y + threadIdx.y;
   int w = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -32,7 +32,7 @@ __global__ void erode_depth_kernel(
     return;
   }
 
-  float d_ori = depth[h * W + w];
+  float d_ori = depth[h * depth_stride + w];
 
   // Check the validity of the depth value
   if (d_ori < 0.1f || d_ori >= zfar) {
@@ -52,7 +52,7 @@ __global__ void erode_depth_kernel(
       if (v < 0 || v >= H) {
         continue;
       }
-      float cur_depth = depth[v * W + u];
+      float cur_depth = depth[v * depth_stride + u];
 
       total += 1.0f;
 
@@ -71,7 +71,8 @@ __global__ void erode_depth_kernel(
 }
 
 __global__ void bilateral_filter_depth_kernel(
-    float* depth, float* out, int H, int W, float zfar, int radius, float sigmaD, float sigmaR) {
+    const float* depth, float* out, int H, int W, int depth_stride,
+    float zfar, int radius, float sigmaD, float sigmaR) {
   int h = blockIdx.y * blockDim.y + threadIdx.y;
   int w = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -93,7 +94,7 @@ __global__ void bilateral_filter_depth_kernel(
         continue;
       }
       // Get the current depth value
-      float cur_depth = depth[v * W + u];
+      float cur_depth = depth[v * depth_stride + u];
       if (cur_depth >= 0.1f && cur_depth < zfar) {
         num_valid++;
         mean_depth += cur_depth;
@@ -108,7 +109,7 @@ __global__ void bilateral_filter_depth_kernel(
 
   mean_depth /= (float)num_valid;
 
-  float depthCenter = depth[h * W + w];
+  float depthCenter = depth[h * depth_stride + w];
   float sum_weight = 0.0f;
   float sum = 0.0f;
 
@@ -121,7 +122,7 @@ __global__ void bilateral_filter_depth_kernel(
       if (v < 0 || v >= H) {
         continue;
       }
-      float cur_depth = depth[v * W + u];
+      float cur_depth = depth[v * depth_stride + u];
       if (cur_depth >= 0.1f && cur_depth < zfar && fabsf(cur_depth - mean_depth) < 0.01f) {
         float weight = expf(
             -((float)((u - w) * (u - w) + (v - h) * (v - h))) / (2.0f * sigmaD * sigmaD) -
@@ -144,34 +145,42 @@ uint16_t ceil_div(uint16_t numerator, uint16_t denominator) {
 }
 
 void erode_depth(
-    cudaStream_t stream, float* depth, float* out, int H, int W, int radius, float depth_diff_thres, float ratio_thres,
-    float zfar) {
+    cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+    float* out, int radius, float depth_diff_thres, float ratio_thres, float zfar) {
+  const int H = static_cast<int>(depth.size.height);
+  const int W = static_cast<int>(depth.size.width);
+  const int depth_stride = static_cast<int>(depth.row_stride_bytes / sizeof(float));
   dim3 block(16, 16);
   dim3 grid(ceil_div(W, 16), ceil_div(H, 16), 1);
 
   erode_depth_kernel<<<grid, block, 0, stream>>>(
-      depth, out, H, W, radius, depth_diff_thres, ratio_thres, zfar);
+      depth.data, out, H, W, depth_stride, radius, depth_diff_thres, ratio_thres, zfar);
 }
 
 void bilateral_filter_depth(
-    cudaStream_t stream, float* depth, float* out, int H, int W, float zfar, int radius, float sigmaD, float sigmaR) {
+    cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+    float* out, float zfar, int radius, float sigmaD, float sigmaR) {
+  const int H = static_cast<int>(depth.size.height);
+  const int W = static_cast<int>(depth.size.width);
+  const int depth_stride = static_cast<int>(depth.row_stride_bytes / sizeof(float));
   dim3 block(16, 16);
   dim3 grid(ceil_div(W, 16), ceil_div(H, 16), 1);
 
-  bilateral_filter_depth_kernel<<<grid, block, 0, stream>>>(depth, out, H, W, zfar, radius, sigmaD, sigmaR);
+  bilateral_filter_depth_kernel<<<grid, block, 0, stream>>>(
+      depth.data, out, H, W, depth_stride, zfar, radius, sigmaD, sigmaR);
 }
 
 __global__ void depth_to_xyz_map_kernel(
     const float* __restrict__ depth, float* __restrict__ xyz_map,
-    int H, int W,
+    int H, int W, int depth_stride, int xyz_stride,
     float fx, float fy, float cx, float cy) {
   int u = blockIdx.x * blockDim.x + threadIdx.x;
   int v = blockIdx.y * blockDim.y + threadIdx.y;
   if (u >= W || v >= H) {
     return;
   }
-  int pidx = v * W + u;
-  int oidx = pidx * 3;
+  int pidx = v * depth_stride + u;
+  int oidx = v * xyz_stride + u * 3;
   float z = depth[pidx];
   if (!(z > 0.0f)) {
     xyz_map[oidx + 0] = 0.0f;
@@ -187,11 +196,18 @@ __global__ void depth_to_xyz_map_kernel(
 }
 
 void depth_to_xyz_map(
-    cudaStream_t stream, const float* depth, float* xyz_map,
-    int H, int W, float fx, float fy, float cx, float cy) {
+    cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+    foundationpose::DeviceImageView<float> xyz_map,
+    foundationpose::CameraIntrinsics intrinsics) {
+  const int H = static_cast<int>(depth.size.height);
+  const int W = static_cast<int>(depth.size.width);
+  const int depth_stride = static_cast<int>(depth.row_stride_bytes / sizeof(float));
+  const int xyz_stride = static_cast<int>(xyz_map.row_stride_bytes / sizeof(float));
   dim3 block(16, 16);
   dim3 grid(ceil_div(W, 16), ceil_div(H, 16), 1);
-  depth_to_xyz_map_kernel<<<grid, block, 0, stream>>>(depth, xyz_map, H, W, fx, fy, cx, cy);
+  depth_to_xyz_map_kernel<<<grid, block, 0, stream>>>(
+      depth.data, xyz_map.data, H, W, depth_stride, xyz_stride,
+      intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy);
 }
 
 // Block reduction: produces per-block min/max u, min/max v over mask>0 pixels and
@@ -202,7 +218,7 @@ void depth_to_xyz_map(
 // object segments and 2-3 orders of magnitude cheaper than a full sort).
 __global__ void guess_translation_reduce_kernel(
     const float* __restrict__ depth, const uint8_t* __restrict__ mask,
-    int H, int W, float min_depth,
+    int H, int W, int depth_stride, int mask_stride, float min_depth,
     int* __restrict__ min_u, int* __restrict__ max_u,
     int* __restrict__ min_v, int* __restrict__ max_v,
     float* __restrict__ depth_sum, int* __restrict__ depth_count) {
@@ -211,15 +227,14 @@ __global__ void guess_translation_reduce_kernel(
   if (u >= W || v >= H) {
     return;
   }
-  int idx = v * W + u;
-  if (mask[idx] == 0) {
+  if (mask[v * mask_stride + u] == 0) {
     return;
   }
   atomicMin(min_u, u);
   atomicMax(max_u, u);
   atomicMin(min_v, v);
   atomicMax(max_v, v);
-  float d = depth[idx];
+  float d = depth[v * depth_stride + u];
   if (d >= min_depth) {
     atomicAdd(depth_sum, d);
     atomicAdd(depth_count, 1);
@@ -268,12 +283,16 @@ __global__ void guess_translation_init_kernel(
 }
 
 void guess_translation_gpu(
-    cudaStream_t stream, const float* depth, const uint8_t* mask, int H, int W,
-    float fx_inv_m00, float fx_inv_m02,
-    float fy_inv_m11, float fy_inv_m12,
+    cudaStream_t stream, foundationpose::DeviceImageView<const float> depth,
+    foundationpose::DeviceImageView<const uint8_t> mask,
+    foundationpose::CameraIntrinsics intrinsics,
     float min_depth,
     float* depth_scratch,
     float* center_and_flag_device) {
+  const int H = static_cast<int>(depth.size.height);
+  const int W = static_cast<int>(depth.size.width);
+  const int depth_stride = static_cast<int>(depth.row_stride_bytes / sizeof(float));
+  const int mask_stride = static_cast<int>(mask.row_stride_bytes);
   int* min_u = reinterpret_cast<int*>(depth_scratch);
   int* max_u = min_u + 1;
   int* min_v = min_u + 2;
@@ -287,10 +306,12 @@ void guess_translation_gpu(
   dim3 block(16, 16);
   dim3 grid(ceil_div(W, 16), ceil_div(H, 16), 1);
   guess_translation_reduce_kernel<<<grid, block, 0, stream>>>(
-      depth, mask, H, W, min_depth, min_u, max_u, min_v, max_v, depth_sum, depth_count);
+      depth.data, mask.data, H, W, depth_stride, mask_stride, min_depth,
+      min_u, max_u, min_v, max_v, depth_sum, depth_count);
   guess_translation_finalize_kernel<<<1, 1, 0, stream>>>(
       min_u, max_u, min_v, max_v, depth_sum, depth_count,
-      fx_inv_m00, fx_inv_m02, fy_inv_m11, fy_inv_m12,
+      1.0f / intrinsics.fx, -intrinsics.cx / intrinsics.fx,
+      1.0f / intrinsics.fy, -intrinsics.cy / intrinsics.fy,
       center_and_flag_device);
 }
 

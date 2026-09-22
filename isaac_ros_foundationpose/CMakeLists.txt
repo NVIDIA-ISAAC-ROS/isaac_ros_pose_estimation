@@ -67,7 +67,9 @@ ament_auto_add_library(foundationpose_pipeline SHARED
   ${NVDIFFRAST_CPP_SOURCES}
 )
 set_target_properties(foundationpose_pipeline PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_compile_options(foundationpose_pipeline PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-w>)
+target_compile_options(
+  foundationpose_pipeline PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:-w;--expt-relaxed-constexpr>)
 target_compile_options(foundationpose_pipeline PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-w>)
 target_include_directories(foundationpose_pipeline PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/isaac_ros_foundationpose/foundationpose_impl>
@@ -96,7 +98,7 @@ set_target_properties(foundationpose_pipeline PROPERTIES
 # FoundationPose node
 ament_auto_add_library(foundationpose_node SHARED src/foundationpose_node.cpp)
 ament_target_dependencies(foundationpose_node rclcpp_components)
-target_link_libraries(foundationpose_node foundationpose_pipeline)
+target_link_libraries(foundationpose_node foundationpose_pipeline CUDA::cudart)
 target_link_libraries(foundationpose_node "${cpp_typesupport_target}")
 rclcpp_components_register_nodes(foundationpose_node "nvidia::isaac_ros::foundationpose::FoundationPoseNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::foundationpose::FoundationPoseNode;$<TARGET_FILE:foundationpose_node>\n")
@@ -110,7 +112,7 @@ set_target_properties(foundationpose_node PROPERTIES
 # FoundationPose Tracking node
 ament_auto_add_library(foundationpose_tracking_node SHARED src/foundationpose_tracking_node.cpp)
 ament_target_dependencies(foundationpose_tracking_node rclcpp_components)
-target_link_libraries(foundationpose_tracking_node foundationpose_pipeline)
+target_link_libraries(foundationpose_tracking_node foundationpose_pipeline CUDA::cudart)
 target_link_libraries(foundationpose_tracking_node "${cpp_typesupport_target}")
 rclcpp_components_register_nodes(foundationpose_tracking_node "nvidia::isaac_ros::foundationpose::FoundationPoseTrackingNode")
 set(node_plugins
@@ -125,6 +127,7 @@ set(node_plugins "${node_plugins}nvidia::isaac_ros::foundationpose::Detection2DA
 # Detection2DToMask utils node
 ament_auto_add_library(detection2_d_to_mask SHARED src/detection2_d_to_mask.cpp)
 ament_target_dependencies(detection2_d_to_mask rclcpp_components)
+target_link_libraries(detection2_d_to_mask CUDA::cudart)
 rclcpp_components_register_nodes(detection2_d_to_mask "nvidia::isaac_ros::foundationpose::Detection2DToMask")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::foundationpose::Detection2DToMask;$<TARGET_FILE:detection2_d_to_mask>\n")
 

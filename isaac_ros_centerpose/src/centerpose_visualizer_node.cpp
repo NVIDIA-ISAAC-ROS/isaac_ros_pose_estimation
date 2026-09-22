@@ -22,10 +22,10 @@
 #include <utility>
 #include <vector>
 
+#include "cuda_buffer/cuda_buffer_api.hpp"
 #include "isaac_ros_centerpose/cuboid3d.hpp"
 #include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_common/cuda_stream.hpp"
-#include "isaac_ros_nitros_image_type/nitros_image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "vision_msgs/msg/detection3_d_array.hpp"
 #include "vision_msgs/msg/detection3_d.hpp"
@@ -206,9 +206,9 @@ void DrawDetections(
     DrawBoundingBox(reprojected_points, bounding_box_color, img);
 
     if (show_axes) {
-      Eigen::Vector3f points_3d_cam_mean = points_3d_cam.colwise().mean().transpose();
       Eigen::MatrixXfRM keypoints3d(1 + points_3d_cam.rows(), points_3d_cam.cols());
-      keypoints3d << points_3d_cam_mean, points_3d_cam;
+      keypoints3d.row(0) = points_3d_cam.colwise().mean();
+      keypoints3d.block(1, 0, points_3d_cam.rows(), points_3d_cam.cols()) = points_3d_cam;
       DrawAxes(keypoints3d, camera_matrix_eigen, img);
     }
   }
@@ -222,10 +222,6 @@ CenterPoseVisualizerNode::CenterPoseVisualizerNode(const rclcpp::NodeOptions & o
   show_axes_{declare_parameter<bool>("show_axes", true)},
   bounding_box_color_{static_cast<int32_t>(declare_parameter<int32_t>(
       "bounding_box_color", int32_t{0x000000ff}))},
-  memory_pool_block_size_{declare_parameter<int64_t>(
-    "memory_pool_block_size", static_cast<int64_t>(3) * 1024 * 1024 * 4)},
-  memory_pool_num_blocks_{declare_parameter<int64_t>(
-    "memory_pool_num_blocks", int64_t{40})},
   input_queue_size_{static_cast<int16_t>(declare_parameter<int>(
     "input_queue_size", 10))},
   output_queue_size_{static_cast<int16_t>(declare_parameter<int>(
@@ -238,22 +234,16 @@ CenterPoseVisualizerNode::CenterPoseVisualizerNode(const rclcpp::NodeOptions & o
 {
   // Create CUDA resources
   cuda_stream_ = ::nvidia::isaac_ros::common::createCudaStream("CenterPoseVisualizerNode");
-  CHECK_CUDA_ERROR(pool_.create(
-    static_cast<size_t>(memory_pool_block_size_),
-    static_cast<size_t>(memory_pool_num_blocks_),
-    nvidia::isaac_ros::nitros::CUDAMemoryPool::MemoryType::Device),
-    "Failed to create CUDA memory pool");
 
-  // This function sets the QoS parameter for publishers and subscribers setup by this NITROS node
   const rclcpp::QoS input_qos = ::isaac_ros::common::AddQosParameter(
     *this, "DEFAULT", "input_qos").keep_last(input_queue_size_);
   const rclcpp::QoS output_qos = ::isaac_ros::common::AddQosParameter(
     *this, "DEFAULT", "output_qos").keep_last(output_queue_size_);
-  const rmw_qos_profile_t rmw_qos_profile = input_qos.get_rmw_qos_profile();
 
   // Subscription options (can be used for callback groups, etc.)
-  rclcpp::SubscriptionOptions sub_options;
-  sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  rclcpp::SubscriptionOptions image_sub_options;
+  image_sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  image_sub_options.acceptable_buffer_backends = "any";
   // Publisher options
   rclcpp::PublisherOptions pub_options;
   pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
@@ -263,18 +253,18 @@ CenterPoseVisualizerNode::CenterPoseVisualizerNode(const rclcpp::NodeOptions & o
     std::bind(
       &CenterPoseVisualizerNode::InputCallback, this,
       std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
-  image_sub_.subscribe(this, INPUT_IMAGE_TOPIC_NAME, rmw_qos_profile, sub_options);
-  camera_info_sub_.subscribe(this, INPUT_CAMERA_INFO_TOPIC_NAME, rmw_qos_profile, sub_options);
-  detection3darray_sub_.subscribe(this, INPUT_DETECTION_TOPIC_NAME, rmw_qos_profile, sub_options);
+  image_sub_.subscribe(this, INPUT_IMAGE_TOPIC_NAME, input_qos, image_sub_options);
+  camera_info_sub_.subscribe(this, INPUT_CAMERA_INFO_TOPIC_NAME, input_qos);
+  detection3darray_sub_.subscribe(this, INPUT_DETECTION_TOPIC_NAME, input_qos);
 
-  image_pub_ = create_publisher<nvidia::isaac_ros::nitros::NitrosImage>(
+  image_pub_ = create_publisher<sensor_msgs::msg::Image>(
     OUTPUT_TOPIC_NAME, output_qos, pub_options);
 
   RCLCPP_INFO(get_logger(), "CenterPoseVisualizerNode initialized");
 }
 
 void CenterPoseVisualizerNode::InputCallback(
-  const nvidia::isaac_ros::nitros::NitrosImage::ConstSharedPtr & nitros_image,
+  const sensor_msgs::msg::Image::ConstSharedPtr & image,
   const vision_msgs::msg::Detection3DArray::ConstSharedPtr & detection3darray,
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & camera_info
 )
@@ -283,60 +273,52 @@ void CenterPoseVisualizerNode::InputCallback(
 
   const cudaStream_t stream = *cuda_stream_;
 
-  // Device -> host for OpenCV drawing
   cv::Mat image_mat;
   {
     const int cv_type = CV_8UC3;
     std::vector<uint8_t> host_image_buffer(
-      static_cast<size_t>(nitros_image->step) * static_cast<size_t>(nitros_image->height));
+      static_cast<size_t>(image->step) * static_cast<size_t>(image->height));
 
+    auto read_handle = cuda_buffer_backend::from_input_buffer(image->data, stream);
     cudaError_t cuda_result = cudaMemcpyAsync(
       host_image_buffer.data(),
-      nitros_image->get_read_handle(stream).get_ptr(),
-      nitros_image->step * nitros_image->height,
-      cudaMemcpyDeviceToHost, stream);
-    CHECK_CUDA_ERROR(cuda_result, "Failed to copy image data from device to host");
+      read_handle.get_ptr(),
+      image->step * image->height,
+      cudaMemcpyDefault, stream);
+    CHECK_CUDA_ERROR(cuda_result, "Failed to copy image data to host");
 
     cuda_result = cudaStreamSynchronize(stream);
     CHECK_CUDA_ERROR(cuda_result, "Failed to synchronize CUDA stream");
 
     image_mat = cv::Mat(
-      static_cast<int>(nitros_image->height),
-      static_cast<int>(nitros_image->width),
+      static_cast<int>(image->height),
+      static_cast<int>(image->width),
       cv_type,
       host_image_buffer.data(),
-      static_cast<size_t>(nitros_image->step)).clone();
+      static_cast<size_t>(image->step)).clone();
   }
 
   DrawDetections(detection3darray, camera_info, show_axes_, bounding_box_color_, image_mat);
 
-  // Host -> device: publish annotated image in a pool-backed NitrosImage
-  auto output_image = std::make_unique<nvidia::isaac_ros::nitros::NitrosImage>();
-  auto output_write_handle = output_image->from_pool(
-    pool_,
-    nitros_image->width,
-    nitros_image->height,
-    nitros_image->step,
-    nitros_image->encoding,
-    stream);
-
   const size_t image_bytes =
-    static_cast<size_t>(nitros_image->step) * static_cast<size_t>(nitros_image->height);
-  cudaError_t cuda_result = cudaMemcpyAsync(
-    output_write_handle.get_ptr(),
-    image_mat.data,
-    image_bytes,
-    cudaMemcpyHostToDevice,
-    stream);
-  CHECK_CUDA_ERROR(cuda_result, "Failed to copy annotated image to device buffer");
+    static_cast<size_t>(image->step) * static_cast<size_t>(image->height);
+  auto output_image = std::make_unique<sensor_msgs::msg::Image>();
+  output_image->header = image->header;
+  output_image->height = image->height;
+  output_image->width = image->width;
+  output_image->encoding = image->encoding;
+  output_image->is_bigendian = image->is_bigendian;
+  output_image->step = image->step;
+  output_image->data = cuda_buffer_backend::allocate_buffer(image_bytes);
+  {
+    auto write_handle =
+      cuda_buffer_backend::from_output_buffer(output_image->data, stream);
+    const cudaError_t cuda_result = cudaMemcpyAsync(
+      write_handle.get_ptr(), image_mat.data, image_bytes, cudaMemcpyDefault, stream);
+    CHECK_CUDA_ERROR(cuda_result, "Failed to copy annotated image to output buffer");
+  }
 
-  output_image->frame_id = nitros_image->get_frame_id();
-  output_image->set_timestamp_sec(nitros_image->get_timestamp_sec());
-  output_image->set_timestamp_nsec(nitros_image->get_timestamp_nsec());
-  output_image->data_format_name = nitros_image->data_format_name;
-  output_image->compatible_data_format_name = nitros_image->compatible_data_format_name;
-
-  image_pub_->publish(*output_image);
+  image_pub_->publish(std::move(output_image));
 }
 
 }  // namespace centerpose

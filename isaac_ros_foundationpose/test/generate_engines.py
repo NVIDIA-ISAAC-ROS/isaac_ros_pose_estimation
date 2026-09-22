@@ -15,6 +15,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import fcntl
 import os
 import shutil
 import subprocess
@@ -34,6 +35,7 @@ SCORE_ENGINE_NAME = f'dummy_score_trt_{_TRT_VER}_engine.plan'
 
 REFINE_ENGINE_PATH = '/tmp/' + REFINE_ENGINE_NAME
 SCORE_ENGINE_PATH = '/tmp/' + SCORE_ENGINE_NAME
+ENGINE_LOCK_PATH = f'/tmp/isaac_ros_foundationpose_{_TRT_VER}_engine_generation.lock'
 
 
 def get_trtexec_path():
@@ -99,34 +101,35 @@ def generate_foundationpose_engines():
     This function should be called at the beginning of generate_test_description()
     in FoundationPose test files.
     """
-    # Get correct model paths (relative to test directory).
-    base_path = os.path.dirname(__file__)
-    refine_model_path = os.path.join(base_path, 'models', REFINE_MODEL_NAME)
-    score_model_path = os.path.join(base_path, 'models', SCORE_MODEL_NAME)
+    # Bazel may run these tests concurrently, so serialize writes to the shared engine files.
+    with open(ENGINE_LOCK_PATH, 'w', encoding='utf-8') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
 
-    # Generate Refine engine.
-    refine_trtexec_args = [
-        f'--onnx={refine_model_path}',
-        f'--saveEngine={REFINE_ENGINE_PATH}',
-        '--minShapes=input1:1x160x160x6,input2:1x160x160x6',
-        '--optShapes=input1:1x160x160x6,input2:1x160x160x6',
-        '--maxShapes=input1:42x160x160x6,input2:42x160x160x6',
-        '--fp16',
-        '--skipInference',
-    ]
-    generate_tensorrt_engine(REFINE_ENGINE_PATH, 'Refine', refine_trtexec_args)
+        base_path = os.path.dirname(__file__)
+        refine_model_path = os.path.join(base_path, 'models', REFINE_MODEL_NAME)
+        score_model_path = os.path.join(base_path, 'models', SCORE_MODEL_NAME)
 
-    # Generate Score engine.
-    score_trtexec_args = [
-        f'--onnx={score_model_path}',
-        f'--saveEngine={SCORE_ENGINE_PATH}',
-        '--fp16',
-        '--minShapes=input1:1x160x160x6,input2:1x160x160x6',
-        '--optShapes=input1:1x160x160x6,input2:1x160x160x6',
-        '--maxShapes=input1:252x160x160x6,input2:252x160x160x6',
-        '--skipInference',
-    ]
-    generate_tensorrt_engine(SCORE_ENGINE_PATH, 'Score', score_trtexec_args)
+        refine_trtexec_args = [
+            f'--onnx={refine_model_path}',
+            f'--saveEngine={REFINE_ENGINE_PATH}',
+            '--minShapes=input1:1x160x160x6,input2:1x160x160x6',
+            '--optShapes=input1:1x160x160x6,input2:1x160x160x6',
+            '--maxShapes=input1:42x160x160x6,input2:42x160x160x6',
+            '--fp16',
+            '--skipInference',
+        ]
+        generate_tensorrt_engine(REFINE_ENGINE_PATH, 'Refine', refine_trtexec_args)
+
+        score_trtexec_args = [
+            f'--onnx={score_model_path}',
+            f'--saveEngine={SCORE_ENGINE_PATH}',
+            '--fp16',
+            '--minShapes=input1:1x160x160x6,input2:1x160x160x6',
+            '--optShapes=input1:1x160x160x6,input2:1x160x160x6',
+            '--maxShapes=input1:252x160x160x6,input2:252x160x160x6',
+            '--skipInference',
+        ]
+        generate_tensorrt_engine(SCORE_ENGINE_PATH, 'Score', score_trtexec_args)
 
 
 def get_engines():

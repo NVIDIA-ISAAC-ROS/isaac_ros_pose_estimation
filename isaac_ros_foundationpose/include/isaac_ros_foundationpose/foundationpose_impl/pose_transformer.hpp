@@ -20,6 +20,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -32,6 +33,26 @@ namespace isaac_ros
 {
 namespace foundationpose
 {
+
+struct DevicePoseBatchView
+{
+  float * data{nullptr};
+  uint32_t count{0};
+
+  static constexpr uint32_t kFloatsPerPose{16};
+
+  float * pose(uint32_t index) const
+  {
+    return data + static_cast<size_t>(index) * kFloatsPerPose;
+  }
+};
+
+struct RefineDeltaBatchView
+{
+  const float * translation{nullptr};
+  const float * rotation{nullptr};
+  uint32_t pose_count{0};
+};
 
 // Applies the refine network's SE(3) delta predictions to pose hypotheses.
 // Extracted from FoundationposeTransformation GXF codelet.
@@ -46,11 +67,9 @@ public:
 
   // Apply refine deltas to a batch of poses in-place on GPU. No host round-trip.
   void applyDeltas(
-    float * poses_device,
-    uint32_t num_poses,
-    const void * trans_delta_device,
-    const void * rot_delta_device,
-    std::shared_ptr<const MeshData> mesh_data);
+    DevicePoseBatchView poses,
+    RefineDeltaBatchView deltas,
+    MeshGpuView mesh);
 
 private:
   float rot_normalizer_;

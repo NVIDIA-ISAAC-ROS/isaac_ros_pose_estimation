@@ -36,10 +36,8 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
         engine_file_path = LaunchConfiguration('engine_file_path')
         input_tensor_names = LaunchConfiguration('input_tensor_names')
         input_binding_names = LaunchConfiguration('input_binding_names')
-        input_tensor_formats = LaunchConfiguration('input_tensor_formats')
         output_tensor_names = LaunchConfiguration('output_tensor_names')
         output_binding_names = LaunchConfiguration('output_binding_names')
-        output_tensor_formats = LaunchConfiguration('output_tensor_formats')
         tensorrt_verbose = LaunchConfiguration('tensorrt_verbose')
         force_engine_update = LaunchConfiguration('force_engine_update')
         max_workspace_size = LaunchConfiguration('max_workspace_size')
@@ -70,10 +68,8 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                     'engine_file_path': engine_file_path,
                     'input_tensor_names': input_tensor_names,
                     'input_binding_names': input_binding_names,
-                    'input_tensor_formats': input_tensor_formats,
                     'output_tensor_names': output_tensor_names,
                     'output_binding_names': output_binding_names,
-                    'output_tensor_formats': output_tensor_formats,
                     'verbose': tensorrt_verbose,
                     'force_engine_update': force_engine_update,
                     'max_workspace_size': max_workspace_size,
@@ -140,10 +136,6 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                 'input_binding_names',
                 default_value='["input"]',
                 description='A list of input tensor binding names (specified by model)'),
-            'input_tensor_formats': DeclareLaunchArgument(
-                'input_tensor_formats',
-                default_value='["nitros_tensor_list_nchw_rgb_f32"]',
-                description='The nitros format of the input tensors'),
             'output_tensor_names': DeclareLaunchArgument(
                 'output_tensor_names',
                 default_value='["output"]',
@@ -153,10 +145,6 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                 'output_binding_names',
                 default_value='["output"]',
                 description='A  list of output tensor binding names (specified by model)'),
-            'output_tensor_formats': DeclareLaunchArgument(
-                'output_tensor_formats',
-                default_value='["nitros_tensor_list_nchw_rgb_f32"]',
-                description='The nitros format of the output tensors'),
             'tensorrt_verbose': DeclareLaunchArgument(
                 'tensorrt_verbose',
                 default_value='False',
@@ -183,7 +171,7 @@ class IsaacROSDopeLaunchFragment(IsaacROSLaunchFragment):
                 description='Whether Dope Decoder will broadcast poses to the TF tree or not'),
             'dope_encoder_launch': IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder_nodes.launch.py')]
+                    [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
                 ),
                 launch_arguments={
                     'input_image_width': str(interface_specs['camera_resolution']['width']),

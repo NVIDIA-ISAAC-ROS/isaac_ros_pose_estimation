@@ -325,22 +325,31 @@ PoseSampler::~PoseSampler()
 }
 
 SamplingResult PoseSampler::sample(
-  const float * depth_device,
-  const uint8_t * mask_device,
-  uint32_t height, uint32_t width,
-  const Eigen::Matrix3f & K,
+  const FrameObservationView & frame,
   std::shared_ptr<const MeshData> mesh_data)
 {
   SamplingResult result;
 
-  if (!device_mem_cached_) {
-    size_t sz = width * height * sizeof(float);
+  const ImageDim size = frame.depth.size;
+  if (!device_mem_cached_ || !(cached_size_ == size)) {
+    if (erode_depth_device_) {
+      cudaFree(erode_depth_device_);
+      erode_depth_device_ = nullptr;
+    }
+    if (bilateral_filter_depth_device_) {
+      cudaFree(bilateral_filter_depth_device_);
+      bilateral_filter_depth_device_ = nullptr;
+    }
+    size_t sz = size.numPixels() * sizeof(float);
     CHECK_CUDA_ERROR(cudaMalloc(&erode_depth_device_, sz), "malloc erode");
     CHECK_CUDA_ERROR(cudaMalloc(&bilateral_filter_depth_device_, sz), "malloc bilateral");
-    CHECK_CUDA_ERROR(cudaMalloc(&center_flag_device_, 4 * sizeof(float)), "malloc center");
-    CHECK_CUDA_ERROR(cudaMallocHost(&center_flag_host_pinned_, 4 * sizeof(float)),
-      "mallocHost center");
+    if (!center_flag_device_) {
+      CHECK_CUDA_ERROR(cudaMalloc(&center_flag_device_, 4 * sizeof(float)), "malloc center");
+      CHECK_CUDA_ERROR(cudaMallocHost(&center_flag_host_pinned_, 4 * sizeof(float)),
+        "mallocHost center");
+    }
     device_mem_cached_ = true;
+    cached_size_ = size;
   }
 
   auto all_symmetry_axes = params_.symmetry_axes;
@@ -360,20 +369,22 @@ SamplingResult PoseSampler::sample(
   }
 
   nvidia::isaac_ros::erode_depth(
-    stream_, const_cast<float *>(depth_device), erode_depth_device_, height, width);
+    stream_, frame.depth, erode_depth_device_);
   CHECK_CUDA_ERROR(cudaGetLastError(), "erode_depth");
 
+  DeviceImageView<const float> eroded_depth{
+    erode_depth_device_, size,
+    static_cast<size_t>(size.width) * sizeof(float), 1};
   nvidia::isaac_ros::bilateral_filter_depth(
-    stream_, erode_depth_device_, bilateral_filter_depth_device_, height, width);
+    stream_, eroded_depth, bilateral_filter_depth_device_);
   CHECK_CUDA_ERROR(cudaGetLastError(), "bilateral_filter");
 
-  // Compute bounding-box center + mean valid depth entirely on GPU. The erode+bilateral
-  // scratch buffer doubles as scratch for the 6 atomic counters used in the reduction.
-  Eigen::Matrix3f K_inv = K.inverse();
+  DeviceImageView<const float> filtered_depth{
+    bilateral_filter_depth_device_, size,
+    static_cast<size_t>(size.width) * sizeof(float), 1};
   nvidia::isaac_ros::guess_translation_gpu(
-    stream_, bilateral_filter_depth_device_, mask_device, height, width,
-    K_inv(0, 0), K_inv(0, 2), K_inv(1, 1), K_inv(1, 2),
-    params_.min_depth, erode_depth_device_, center_flag_device_);
+    stream_, filtered_depth, frame.mask, frame.intrinsics, params_.min_depth,
+    erode_depth_device_, center_flag_device_);
   CHECK_CUDA_ERROR(cudaGetLastError(), "guess_translation_gpu");
 
   CHECK_CUDA_ERROR(cudaMemcpyAsync(center_flag_host_pinned_, center_flag_device_,

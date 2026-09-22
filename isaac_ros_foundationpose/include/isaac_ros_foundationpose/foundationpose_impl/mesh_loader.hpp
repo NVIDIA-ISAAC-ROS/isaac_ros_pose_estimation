@@ -75,6 +75,39 @@ struct MeshData
   MeshData & operator=(MeshData &&) = delete;
 };
 
+struct MeshGpuView
+{
+  const float * vertices{nullptr};
+  const float * normals{nullptr};
+  const int32_t * faces{nullptr};
+  const float * texcoords{nullptr};
+  const uint8_t * texture{nullptr};
+  int num_vertices{0};
+  int num_faces{0};
+  int texture_height{0};
+  int texture_width{0};
+  int texture_channels{0};
+  float diameter{0.0f};
+  bool has_texture{false};
+
+  static MeshGpuView from(const MeshData & mesh)
+  {
+    return {
+      mesh.mesh_vertices_device,
+      mesh.mesh_normals_device,
+      mesh.mesh_faces_device,
+      mesh.texcoords_device,
+      mesh.texture_map_device,
+      mesh.num_vertices,
+      mesh.num_faces,
+      mesh.texture_map_height,
+      mesh.texture_map_width,
+      mesh.texture_map_channels,
+      mesh.mesh_diameter,
+      mesh.has_tex};
+  }
+};
+
 // Loads a 3D mesh (OBJ/etc.) via Assimp, uploads vertices/faces/textures to GPU.
 // No GXF dependency. Thread safety: NOT thread-safe.
 class MeshLoader

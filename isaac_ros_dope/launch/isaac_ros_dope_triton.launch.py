@@ -74,10 +74,6 @@ def generate_launch_description():
             default_value='["input_1"]',
             description='A list of input tensor binding names (specified by model)'),
         DeclareLaunchArgument(
-            'input_tensor_formats',
-            default_value='["nitros_tensor_list_nchw_rgb_f32"]',
-            description='The nitros format of the input tensors'),
-        DeclareLaunchArgument(
             'output_tensor_names',
             default_value='["output_tensor"]',
             description='A list of tensor names to bound to the specified output binding names'),
@@ -85,10 +81,6 @@ def generate_launch_description():
             'output_binding_names',
             default_value='["softmax_1"]',
             description='A  list of output tensor binding names (specified by model)'),
-        DeclareLaunchArgument(
-            'output_tensor_formats',
-            default_value='["nitros_tensor_list_nhwc_rgb_f32"]',
-            description='The nitros format of the output tensors'),
         DeclareLaunchArgument(
             'object_name',
             default_value='Ketchup',
@@ -117,10 +109,8 @@ def generate_launch_description():
     max_batch_size = LaunchConfiguration('max_batch_size')
     input_tensor_names = LaunchConfiguration('input_tensor_names')
     input_binding_names = LaunchConfiguration('input_binding_names')
-    input_tensor_formats = LaunchConfiguration('input_tensor_formats')
     output_tensor_names = LaunchConfiguration('output_tensor_names')
     output_binding_names = LaunchConfiguration('output_binding_names')
-    output_tensor_formats = LaunchConfiguration('output_tensor_formats')
 
     # DOPE Decoder parameters
     object_name = LaunchConfiguration('object_name')
@@ -130,7 +120,7 @@ def generate_launch_description():
     encoder_dir = get_package_share_directory('isaac_ros_dnn_image_encoder')
     dope_encoder_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder_nodes.launch.py')]
+            [os.path.join(encoder_dir, 'launch', 'dnn_image_encoder.launch.py')]
         ),
         launch_arguments={
             'input_image_width': input_image_width,
@@ -172,10 +162,8 @@ def generate_launch_description():
             'max_batch_size': max_batch_size,
             'input_tensor_names': input_tensor_names,
             'input_binding_names': input_binding_names,
-            'input_tensor_formats': input_tensor_formats,
             'output_tensor_names': output_tensor_names,
             'output_binding_names': output_binding_names,
-            'output_tensor_formats': output_tensor_formats,
         }])
 
     dope_decoder_node = ComposableNode(
