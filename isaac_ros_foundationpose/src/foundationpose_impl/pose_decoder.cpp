@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <algorithm>
+#include <utility>
 
 #include "isaac_ros_common/cuda_stream.hpp"
 
@@ -36,7 +37,7 @@ namespace
 {
 constexpr size_t kMatSize = 4;
 
-int findMaxScoreIndex(cudaStream_t stream, const float * scores_device, int N)
+std::pair<int, float> findMaxScore(cudaStream_t stream, const float * scores_device, int N)
 {
   std::vector<float> scores_host(N);
   CHECK_CUDA_ERROR(
@@ -45,14 +46,15 @@ int findMaxScoreIndex(cudaStream_t stream, const float * scores_device, int N)
       N * sizeof(float), cudaMemcpyDeviceToHost, stream),
     "memcpy scores D2H");
   CHECK_CUDA_ERROR(cudaStreamSynchronize(stream), "sync scores");
-  return static_cast<int>(
-    std::max_element(scores_host.begin(), scores_host.end()) - scores_host.begin());
+  auto it = std::max_element(scores_host.begin(), scores_host.end());
+  return {static_cast<int>(it - scores_host.begin()), *it};
 }
 
 DecodeResult buildResult(
   const Eigen::Matrix4f & pose_matrix,
   std::shared_ptr<const MeshData> mesh_data,
-  const RosMessageStamp & stamp)
+  const RosMessageStamp & stamp,
+  float score)
 {
   Eigen::Matrix4f tf_to_center = Eigen::Matrix4f::Identity();
   tf_to_center.block<3, 1>(0, 3) = -mesh_data->mesh_model_center;
@@ -83,6 +85,7 @@ DecodeResult buildResult(
 
   vision_msgs::msg::ObjectHypothesisWithPose hyp;
   hyp.pose.pose = det.bbox.center;
+  hyp.hypothesis.score = score;
   det.results.push_back(hyp);
 
   DecodeResult result;
@@ -110,7 +113,7 @@ DecodeResult PoseDecoder::decode(
     throw std::runtime_error("[PoseDecoder] decode called with 0 poses");
   }
 
-  int best_idx = findMaxScoreIndex(stream_, scores.data, scores.count);
+  const auto [best_idx, best_score] = findMaxScore(stream_, scores.data, scores.count);
 
   Eigen::Matrix4f pose_matrix;
   const size_t mat_bytes = kMatSize * kMatSize * sizeof(float);
@@ -122,7 +125,7 @@ DecodeResult PoseDecoder::decode(
     "memcpy best pose");
   CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_), "sync best pose");
 
-  return buildResult(pose_matrix, mesh_data, stamp);
+  return buildResult(pose_matrix, mesh_data, stamp, best_score);
 }
 
 DecodeResult PoseDecoder::decodeTracking(
@@ -141,7 +144,8 @@ DecodeResult PoseDecoder::decodeTracking(
     "memcpy tracking pose");
   CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_), "sync tracking pose");
 
-  return buildResult(pose_matrix, mesh_data, stamp);
+  // Tracking mode runs no score network, so there is no score to report.
+  return buildResult(pose_matrix, mesh_data, stamp, 0.0f);
 }
 
 }  // namespace foundationpose
